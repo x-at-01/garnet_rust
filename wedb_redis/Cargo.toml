@@ -1,0 +1,53 @@
+[package]
+name = "wedb_redis"
+version = "0.1.0"
+edition = "2024"
+license = "MulanPSL-2.0"
+repository = "https://github.com/x-at-01/garnet_rust.git"
+homepage = "https://github.com/x-at-01/garnet_rust/tree/main/wedb_redis"
+description = "wedb_redis"
+keywords = [ ]
+categories = [ ]
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = [ "--cfg", "docsrs" ]
+
+[dependencies]
+coarsetime = "0.1.37"
+fastrand = "2.5.0"
+fearless_simd = "0.7.0"
+log = "0.4.34"
+itoa = "1.0.18"
+thiserror = "2.0.20"
+zmij = "1.0.23"
+wbftree = { version = "0.1.0", path = "../../wedb_base/wbftree" }
+wedb_hash = { version = "0.1.0", path = "../wedb_hash" }
+wedb_hll = { version = "0.1.0", path = "../wedb_hll" }
+wedb_list = { version = "0.1.0", path = "../wedb_list" }
+wedb_object = { version = "0.1.0", path = "../wedb_object" }
+wedb_set = { version = "0.1.0", path = "../wedb_set" }
+wedb_zset = { version = "0.1.0", path = "../wedb_zset" }
+wdev = { version = "0.1.0", path = "../../wedb_base/wdev" }
+windex = { version = "0.1.0", path = "../../wedb_base/windex" }
+wkv = { version = "0.1.0", path = "../../wedb_base/wkv" }
+wepoch = { version = "0.1.0", path = "../../wedb_base/wepoch" }
+whlog = { version = "0.1.0", path = "../../wedb_base/whlog" }
+wram = { version = "0.1.0", path = "../../wedb_base/wram" }
+whasher = { version = "0.1.0", path = "../../wedb_base/whasher" }
+wrecord = { version = "0.1.0", path = "../../wedb_base/wrecord" }
+
+[dev-dependencies]
+aok = "0.1.18"
+wcompact = { version = "0.1.0", path = "../../wedb_base/wcompact" }
+wcpr = { version = "0.1.0", path = "../../wedb_base/wcpr" }
+compio = { version = "0.19.2", features = [ "runtime", "time" ] }
+ctor = "1.0.13"
+fastrand = "2.5.0"
+itoa = "1.0.18"
+log_init = "0.1.39"
+sonic-rs = "0.5.8"
+tempfile = "3.27.0"
+
+[lints]
+workspace = true

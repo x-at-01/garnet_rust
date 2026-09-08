@@ -1,0 +1,61 @@
+[package]
+name = "wedb_example"
+version = "0.1.0"
+edition = "2024"
+license = "MulanPSL-2.0"
+repository = "https://github.com/x-at-01/garnet_rust.git"
+homepage = "https://github.com/x-at-01/garnet_rust/tree/main/example"
+description = "wedb_example"
+keywords = []
+categories = []
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
+[features]
+default = []
+
+[dev-dependencies]
+aok = "0.1.18"
+coarsetime = "0.1.37"
+compio = { version = "0.19.2", features = ["runtime"] }
+ctor = "1.0.13"
+log = "0.4.34"
+log_init = "0.1.39"
+tempfile = "3.27.0"
+wcpr = { version = "0.1.0", path = "../../wedb_base/wcpr" }
+wcompact = { version = "0.1.0", path = "../../wedb_base/wcompact" }
+wdev = { version = "0.1.0", path = "../../wedb_base/wdev" }
+wkv = { version = "0.1.0", path = "../../wedb_base/wkv" }
+
+[dev-dependencies.wepoch]
+path = "../../wedb_base/wepoch"
+version = "0.1.0"
+
+[dev-dependencies.wedb_hash]
+path = "../wedb_hash"
+version = "0.1.0"
+
+[dev-dependencies.whasher]
+path = "../../wedb_base/whasher"
+version = "0.1.0"
+
+[dev-dependencies.wedb_hll]
+path = "../wedb_hll"
+version = "0.1.0"
+
+[dev-dependencies.wedb_list]
+path = "../wedb_list"
+version = "0.1.0"
+
+[dev-dependencies.wedb_set]
+path = "../wedb_set"
+version = "0.1.0"
+
+[dev-dependencies.wedb_zset]
+path = "../wedb_zset"
+version = "0.1.0"
+
+[lints]
+workspace = true

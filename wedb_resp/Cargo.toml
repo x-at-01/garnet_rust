@@ -1,0 +1,40 @@
+[package]
+name = "wedb_resp"
+version = "0.1.0"
+edition = "2024"
+license = "MulanPSL-2.0"
+repository = "https://github.com/x-at-01/garnet_rust.git"
+homepage = "https://github.com/x-at-01/garnet_rust/tree/main/wedb_resp"
+description = "wedb_resp"
+keywords = [ ]
+categories = [ ]
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = [ "--cfg", "docsrs" ]
+
+[lints]
+workspace = true
+
+[features]
+default = [ ]
+
+[dependencies]
+fast-float = "0.2.0"
+fearless_simd = "0.7.0"
+hipstr = "0.8.0"
+itoa = "1.0.18"
+memchr = "2.8.3"
+thiserror = "2.0.20"
+zmij = "1.0.23"
+
+[dev-dependencies]
+aok = "0.1.18"
+ctor = "1.0.13"
+fastrand = "2.5.0"
+log = "0.4.34"
+log_init = "0.1.39"
+
+[dev-dependencies.whasher]
+path = "../../wedb_base/whasher"
+version = "0.1.0"

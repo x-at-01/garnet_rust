@@ -1,0 +1,38 @@
+[package]
+name = "wedb_lua"
+version = "0.1.0"
+edition = "2024"
+license = "MulanPSL-2.0"
+repository = "https://github.com/x-at-01/garnet_rust.git"
+homepage = "https://github.com/x-at-01/garnet_rust/tree/main/wedb_lua"
+description = "wedb_lua"
+keywords = []
+categories = []
+
+[features]
+default = []
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
+[dependencies]
+coarsetime = "0.1.37"
+gxhash = "3.5.0"
+itoa = "1.0.18"
+log = "0.4.34"
+luau = "0.733.0"
+sha1 = "0.11"
+sonic-rs = "0.5.8"
+thiserror = "2.0.20"
+whasher = { version = "0.1.0", path = "../../wedb_base/whasher" }
+wedb_module = { version = "0.1.0", path = "../wedb_module" }
+
+[dev-dependencies]
+aok = "0.1.18"
+ctor = "1.0.13"
+log = "0.4.34"
+log_init = "0.1.39"
+
+[lints]
+workspace = true

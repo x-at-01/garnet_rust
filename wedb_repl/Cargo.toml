@@ -1,0 +1,46 @@
+[package]
+name = "wedb_repl"
+version = "0.1.0"
+edition = "2024"
+license = "MulanPSL-2.0"
+repository = "https://github.com/x-at-01/garnet_rust.git"
+homepage = "https://github.com/x-at-01/garnet_rust/tree/main/wedb_repl"
+description = "wedb_repl"
+keywords = []
+categories = []
+
+[features]
+default = []
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
+[dependencies]
+coarsetime = "0.1.37"
+compio = { version = "0.19.2", features = ["net", "runtime", "fs", "arrayvec", "time"] }
+fastrand = "2.5.0"
+itoa = "1.0.18"
+log = "0.4.34"
+memchr = "2.8.3"
+parking_lot = "0.12.5"
+whasher = { version = "0.1.0", path = "../../wedb_base/whasher" }
+thiserror = "2.0.20"
+wdev = { version = "0.1.0", path = "../../wedb_base/wdev" }
+wedb_resp = { version = "0.1.0", path = "../wedb_resp" }
+wedb_redis = { version = "0.1.0", path = "../wedb_redis" }
+wkv = { version = "0.1.0", path = "../../wedb_base/wkv" }
+waof = { version = "0.1.0", path = "../../wedb_base/waof" }
+wedb_cluster = { version = "0.1.0", path = "../wedb_cluster" }
+arrayvec = "0.7.8"
+bitcode = "0.6.9"
+
+[dev-dependencies]
+aok = "0.1.18"
+ctor = "1.0.13"
+log = "0.4.34"
+log_init = "0.1.39"
+tempfile = "3.27.0"
+
+[lints]
+workspace = true

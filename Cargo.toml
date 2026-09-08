@@ -1,0 +1,58 @@
+[workspace]
+resolver = "3"
+members = [
+  "wedb_acl",
+  "wedb_bench",
+  "wedb_blocking",
+  "wedb_cluster",
+  "example",
+  "wedb_hash",
+  "wedb_hll",
+  "wedb_list",
+  "wedb_lua",
+  "wedb_net",
+  "wedb_object",
+  "wedb_pubsub",
+  "wedb_repl",
+  "wedb_resp",
+  "wedb_server",
+  "wedb_set",
+  "wedb_txn",
+  "wedb_zset",
+  "wedb_vector",
+  "wedb_module",
+  "wedb_redis",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+description = "High-performance distributed cache and embedded storage engine / 基于现代 Rust 与 compio 异步底座的高性能分布式缓存与嵌入式存储引擎"
+keywords = ["cache", "storage-engine", "redis", "database", "compio"]
+categories = [
+  "database-implementations",
+  "caching",
+  "asynchronous",
+  "embedded-database",
+  "concurrency",
+]
+repository = "https://github.com/x-at-01/garnet_rust"
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+strip = true
+overflow-checks = false
+
+[profile.bench]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+
+[workspace.lints.clippy]
+# compio 线程每核 (thread-per-core) 模型：异步句柄绑定线程本地驱动，类型本身 !Send/!Sync，
+# 在单运行时线程内以 Arc 共享句柄属预期用法，此 lint 对 compio 生态属误报
+arc_with_non_send_sync = "allow"

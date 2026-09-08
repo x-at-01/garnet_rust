@@ -1,0 +1,14 @@
+port: 6379
+bind: 127.0.0.1
+dir: ./data
+cluster_enabled: true
+requirepass: secret123
+gc_enabled: true
+expired_scan_interval_ms: 1000
+compaction_interval_ms: 60000
+compaction_max_segments: 8
+compaction_num_segments: 1
+gc_max_batch_deletes: 256
+seeds:
+    - 127.0.0.1:6379
+    - 127.0.0.1:6380

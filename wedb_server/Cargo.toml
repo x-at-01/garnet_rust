@@ -1,0 +1,72 @@
+[package]
+name = "wedb_server"
+version = "0.1.0"
+edition = "2024"
+license = "MulanPSL-2.0"
+repository = "https://github.com/x-at-01/garnet_rust.git"
+homepage = "https://github.com/x-at-01/garnet_rust/tree/main/wedb_server"
+description = "wedb_server"
+keywords = []
+categories = []
+
+[features]
+default = ["acl", "cluster"]
+acl = []
+cluster = []
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
+[dependencies]
+bytes = "1.12.1"
+clap = "4.6.6"
+clap_args = { version = "0.1.9", features = ["macro"] }
+coarsetime = "0.1.37"
+compio = { version = "0.19.2", features = ["bytes", "dispatcher", "signal"] }
+crossfire = "3.1.20"
+futures-util = "0.3.34"
+gxhash = "3.5.0"
+itoa = "1.0.18"
+log = "0.4.34"
+memchr = "2.8.3"
+nested-text = "0.1.0"
+parking_lot = "0.12.5"
+serde = { version = "1.0.229", features = ["derive"] }
+socket2 = "0.6.5"
+thiserror = "2.0.20"
+wedb_acl = { version = "0.1.0", path = "../wedb_acl" }
+wbftree = { version = "0.1.0", path = "../../wedb_base/wbftree" }
+wedb_blocking = { version = "0.1.0", path = "../wedb_blocking" }
+wcpr = { version = "0.1.0", path = "../../wedb_base/wcpr" }
+wedb_cluster = { version = "0.1.0", path = "../wedb_cluster" }
+wcompact = { version = "0.1.0", path = "../../wedb_base/wcompact" }
+wdev = { version = "0.1.0", path = "../../wedb_base/wdev" }
+wedb_hash = { version = "0.1.0", path = "../wedb_hash" }
+wedb_list = { version = "0.1.0", path = "../wedb_list" }
+wedb_lua = { version = "0.1.0", path = "../wedb_lua" }
+wedb_module = { version = "0.1.0", path = "../wedb_module" }
+wedb_net = { version = "0.1.0", path = "../wedb_net" }
+wedb_pubsub = { version = "0.1.0", path = "../wedb_pubsub" }
+wrecord = { version = "0.1.0", path = "../../wedb_base/wrecord" }
+wedb_repl = { version = "0.1.0", path = "../wedb_repl" }
+wedb_redis = { version = "0.1.0", path = "../wedb_redis" }
+wedb_resp = { version = "0.1.0", path = "../wedb_resp" }
+wkv = { version = "0.1.0", path = "../../wedb_base/wkv" }
+wedb_vector = { version = "0.1.0", path = "../wedb_vector" }
+wedb_zset = { version = "0.1.0", path = "../wedb_zset" }
+zmij = "1.0.23"
+
+[dev-dependencies]
+aok = "0.1.18"
+ctor = "1.0.13"
+log = "0.4.34"
+log_init = "0.1.39"
+tempfile = "3.27.0"
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "wedb-server"
+path = "src/main.rs"

@@ -1,0 +1,37 @@
+[package]
+name = "wedb_object"
+version = "0.1.0"
+edition = "2024"
+license = "MulanPSL-2.0"
+repository = "https://github.com/x-at-01/garnet_rust.git"
+homepage = "https://github.com/x-at-01/garnet_rust/tree/main/wedb_object"
+description = "wedb_object"
+keywords = []
+categories = []
+
+[features]
+default = ["wedb_hash", "wedb_zset", "wedb_list", "wedb_set"]
+wedb_hash = ["dep:wedb_hash"]
+wedb_zset = ["dep:wedb_zset"]
+wedb_list = ["dep:wedb_list"]
+wedb_set = ["dep:wedb_set"]
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
+[lints]
+workspace = true
+
+[dependencies]
+thiserror = "2.0.20"
+wedb_hash = { version = "0.1.0", path = "../wedb_hash", optional = true }
+wedb_list = { version = "0.1.0", path = "../wedb_list", optional = true }
+wedb_set = { version = "0.1.0", path = "../wedb_set", optional = true }
+wedb_zset = { version = "0.1.0", path = "../wedb_zset", optional = true }
+
+[dev-dependencies]
+aok = "0.1.18"
+ctor = "1.0.13"
+log = "0.4.34"
+log_init = "0.1.39"

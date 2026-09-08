@@ -1,0 +1,6 @@
+bun.lock
+.gitnexus/
+.codegraph/
+node_modules/
+target/
+scratch/

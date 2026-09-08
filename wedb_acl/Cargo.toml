@@ -1,0 +1,42 @@
+[package]
+name = "wedb_acl"
+version = "0.1.0"
+edition = "2024"
+license = "MulanPSL-2.0"
+repository = "https://github.com/x-at-01/garnet_rust.git"
+homepage = "https://github.com/x-at-01/garnet_rust/tree/main/wedb_acl"
+description = "wedb_acl"
+keywords = []
+categories = []
+
+[features]
+default = []
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
+[dependencies]
+futures-util = { version = "0.3.34", default-features = false, features = ["std"] }
+hex = "0.4.3"
+parking_lot = "0.12.5"
+sha2 = "0.11.0"
+subtle = "2.6.1"
+thiserror = "2.0.20"
+wedb_resp = { version = "0.1.0", path = "../wedb_resp" }
+whasher = { version = "0.1.0", path = "../../wedb_base/whasher" }
+fastrand = "2.5.0"
+wrecord = { version = "0.1.0", path = "../../wedb_base/wrecord" }
+bitcode = "0.6.9"
+itoa = "1.0.18"
+
+[dev-dependencies]
+aok = "0.1.18"
+compio = { version = "0.19.2", features = ["runtime", "macros"] }
+ctor = "1.0.13"
+log = "0.4.34"
+log_init = "0.1.39"
+tempfile = "3.27.0"
+
+[lints]
+workspace = true

@@ -1,0 +1,32 @@
+[package]
+name = "wedb_txn"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "wedb_txn"
+
+[lints]
+workspace = true
+
+[features]
+default = []
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
+[dependencies]
+bytes = "1.12.1"
+thiserror = "2.0.20"
+wedb_resp = { version = "0.1.0", path = "../wedb_resp" }
+whasher = { version = "0.1.0", path = "../../wedb_base/whasher" }
+bitcode = "0.6.9"
+
+[dev-dependencies]
+aok = "0.1.18"
+ctor = "1.0.13"
+log = "0.4.34"
+log_init = "0.1.39"
+parking_lot = "0.12.5"
+itoa = "1.0.18"

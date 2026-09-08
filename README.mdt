@@ -1,0 +1,15 @@
+[English](#en) | [中文](#zh)
+
+---
+
+<a name="en"></a>
+
+<+ ./readme/en/readme.md >
+<+ ./readme/en/bench.md >
+
+---
+
+<a name="zh"></a>
+
+<+ ./readme/zh/readme.md >
+<+ ./readme/zh/bench.md >

@@ -1,0 +1,32 @@
+[package]
+name = "wedb_list"
+version = "0.1.0"
+edition = "2024"
+license = "MulanPSL-2.0"
+repository = "https://github.com/x-at-01/garnet_rust.git"
+homepage = "https://github.com/x-at-01/garnet_rust/tree/main/wedb_list"
+description = "wedb_list"
+keywords = []
+categories = []
+
+[features]
+default = []
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
+[dependencies]
+bitcode = "0.6.9"
+thiserror = "2.0.20"
+
+[dev-dependencies]
+aok = "0.1.18"
+bitcode = "0.6.9"
+ctor = "1.0.13"
+itoa = "1.0.18"
+log = "0.4.34"
+log_init = "0.1.39"
+
+[lints]
+workspace = true
