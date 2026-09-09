@@ -2442,7 +2442,7 @@ fn test_ri_dispose_tree_under_lock_no_ops_on_transferred_source() -> Void {
     // 在转移状态下逐出旧条目必须 No-Op，不得释放活跃树
     let res = store
       .range_index
-      .dispose_tree_under_lock(b"transtest", &stale_stub, false);
+      .dispose_tree_under_lock(b"transtest", &stale_stub, false)?;
     assert!(!res);
     assert_eq!(store.range_index.live_index_count(), 1);
     assert_eq!(
@@ -2454,7 +2454,7 @@ fn test_ri_dispose_tree_under_lock_no_ops_on_transferred_source() -> Void {
     let normal_stub = RangeIndexStub::new(0, 65536, 8, 1024, 128, 4096, StorageBackend::Std);
     let res_evict = store
       .range_index
-      .dispose_tree_under_lock(b"transtest", &normal_stub, false);
+      .dispose_tree_under_lock(b"transtest", &normal_stub, false)?;
     assert!(res_evict);
     assert_eq!(store.range_index.live_index_count(), 0);
     OK

@@ -27,6 +27,9 @@ pub const DEFAULT_COMPACTION_NUM_SEGMENTS: usize = 1;
 /// 默认单轮过期扫描最大物理删除键数（256，对齐 wkv::GcConfig::default）
 pub const DEFAULT_GC_MAX_BATCH_DELETES: usize = 256;
 
+/// 默认 AOF 自动提交策略（0 = 每批应答前提交落盘，对标 Garnet AofAutoCommit）
+pub const DEFAULT_AOF_COMMIT_MS: i64 = 0;
+
 // store 级周期紧缩（对标 Garnet CompactionFrequencySecs / CompactionMaxSeekForward）：
 // 由 `StoreConfig::compaction_freq_secs` 与 `StoreConfig::compaction_max_seek_bytes`
 // 驱动 `run_compaction_task`（按字节推进，auto() 默认 60 秒开启）；本模块的 gc_* 参数
@@ -154,6 +157,22 @@ pub fn cmd(cmd: Command) -> Command {
         .value_parser(clap::value_parser!(usize))
         .default_value("256"),
     )
+    .arg(
+      Arg::new("aof_enabled")
+        .long("aof-enabled")
+        .value_name("BOOL")
+        .help("是否启用 AOF 追加日志（增量持久化与复制流，默认 false，对标 Garnet EnableAOF）")
+        .value_parser(clap::value_parser!(bool))
+        .default_value("false"),
+    )
+    .arg(
+      Arg::new("aof_commit_ms")
+        .long("aof-commit-ms")
+        .value_name("MS")
+        .help("AOF 提交策略：0=每批应答前提交落盘；>0=周期毫秒提交；-1=仅 SAVE/停机时提交且不保证持久（默认 0，对标 Garnet CommitFrequencyMs）")
+        .value_parser(clap::value_parser!(i64).range(-1..))
+        .default_value("0"),
+    )
 }
 
 /// WeDB 高性能 Redis 兼容服务端守护进程
@@ -202,6 +221,13 @@ pub struct ServerArgs {
   /// 单轮过期扫描最大物理删除键数（默认 256）
   pub gc_max_batch_deletes: usize,
 
+  /// 是否启用 AOF 追加日志（默认 false，对标 Garnet EnableAOF）
+  pub aof_enabled: bool,
+
+  /// AOF 提交策略毫秒数（默认 0）：0=每批应答前提交落盘；>0=周期毫秒提交；
+  /// -1=仅 SAVE/停机时提交（对标 Garnet CommitFrequencyMs 三档语义）
+  pub aof_commit_ms: i64,
+
   /// 存储引擎内存预算覆盖（字节）。None = 按物理内存自适应；测试/嵌入式场景
   /// 显式给小值，避免巨型自适应配置（16GB 级页面+索引分配）在并发下抖动
   pub store_memory_budget: Option<u64>,
@@ -227,6 +253,8 @@ impl Default for ServerArgs {
       compaction_max_segments: DEFAULT_COMPACTION_MAX_SEGMENTS,
       compaction_num_segments: DEFAULT_COMPACTION_NUM_SEGMENTS,
       gc_max_batch_deletes: DEFAULT_GC_MAX_BATCH_DELETES,
+      aof_enabled: false,
+      aof_commit_ms: DEFAULT_AOF_COMMIT_MS,
       store_memory_budget: None,
       cluster_seeds: Vec::new(),
     }
@@ -250,6 +278,8 @@ pub struct ServerConfigFile {
   pub compaction_max_segments: Option<usize>,
   pub compaction_num_segments: Option<usize>,
   pub gc_max_batch_deletes: Option<usize>,
+  pub aof_enabled: Option<bool>,
+  pub aof_commit_ms: Option<i64>,
   pub store_memory_budget: Option<u64>,
 
   /// 集群自动发现种子节点列表 (支持 NestedText 列表，每项为 "ip:port")
@@ -431,6 +461,25 @@ impl ServerArgs {
           .unwrap_or(DEFAULT_GC_MAX_BATCH_DELETES)
       };
 
+    let aof_enabled = if m.value_source("aof_enabled") == Some(ValueSource::CommandLine) {
+      *m.get_one::<bool>("aof_enabled").unwrap_or(&false)
+    } else {
+      file_cfg
+        .as_ref()
+        .and_then(|c| c.aof_enabled)
+        .unwrap_or(false)
+    };
+
+    let aof_commit_ms = if m.value_source("aof_commit_ms") == Some(ValueSource::CommandLine) {
+      *m.get_one::<i64>("aof_commit_ms")
+        .unwrap_or(&DEFAULT_AOF_COMMIT_MS)
+    } else {
+      file_cfg
+        .as_ref()
+        .and_then(|c| c.aof_commit_ms)
+        .unwrap_or(DEFAULT_AOF_COMMIT_MS)
+    };
+
     let store_memory_budget = file_cfg.as_ref().and_then(|c| c.store_memory_budget);
 
     let cluster_seeds = if has_cmd_seeds {
@@ -462,6 +511,8 @@ impl ServerArgs {
       compaction_max_segments,
       compaction_num_segments,
       gc_max_batch_deletes,
+      aof_enabled,
+      aof_commit_ms,
       store_memory_budget,
       cluster_seeds,
     })

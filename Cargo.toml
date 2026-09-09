@@ -2,6 +2,7 @@
 resolver = "3"
 members = [
   "wedb_acl",
+  "wedb_aof",
   "wedb_bench",
   "wedb_blocking",
   "wedb_cluster",

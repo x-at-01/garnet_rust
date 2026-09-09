@@ -36,6 +36,14 @@ pub enum Error {
   #[error(transparent)]
   Repl(#[from] wedb_repl::Error),
 
+  /// AOF 追加日志应用层错误
+  #[error(transparent)]
+  Aof(#[from] wedb_aof::Error),
+
+  /// AOF 效果帧格式错误
+  #[error("AOF 效果帧格式错误: {0}")]
+  AofFrame(String),
+
   /// 分布式集群错误
   #[error(transparent)]
   Cluster(#[from] wedb_cluster::Error),

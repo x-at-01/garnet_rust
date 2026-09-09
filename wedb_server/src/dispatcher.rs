@@ -18,12 +18,11 @@ use wedb_cluster::{
 };
 use wedb_list::InsertPosition;
 use wedb_net::SendBuffer;
-use wedb_redis::prelude::*;
+use wedb_redis::{
+  AggregateType, GeoSearchCenter, GeoSearchShape, GeoSortOrder, LexBound, RenameResult, prelude::*,
+};
 use wedb_resp::{CRLF, ParseUtils, RespCommand, SessionParseState, consts};
 use wedb_zset::{GeoDistanceUnit, ScoreRange, ZAddOpt};
-use wedb_redis::{
-  AggregateType, GeoSearchCenter, GeoSearchShape, GeoSortOrder, LexBound, RenameResult,
-};
 use wkv::{StoreSession, TTL_VALUE_LEN, TtlOpt};
 
 use crate::{
@@ -1162,12 +1161,20 @@ impl CommandDispatcher {
         }
         // SAVE = 同步完整 Checkpoint (hlog + HashIndex + RangeIndex + 共享 BfTree)，
         // 快照失败向客户端暴露错误 (对标 Garnet 快照失败致命语义)
+        // checkpoint 前采样 AOF 覆盖位点：快照含 [begin, covered) 全部写效果，
+        // 成功后截断该前缀（对标 Garnet checkpoint 后 TruncateUntil），AOF 只留增量
+        let aof_covered = ctx.aof.covered_address();
         match CheckpointManager::new()
           .create_checkpoint(&ctx.store, &ctx.checkpoint_dir, CheckpointType::FoldOver)
           .await
         {
           Ok(meta) => {
             ctx.last_save_ms.store(meta.created_at, Ordering::Release);
+            if let Some(covered) = aof_covered
+              && let Err(e) = ctx.aof.truncate_covered(covered).await
+            {
+              warn!("AOF checkpoint 后截断失败（仅增大重放体积，不影响正确性）: {e}");
+            }
             buf.write_simple_string(b"OK");
           }
           Err(e) => {
@@ -1186,6 +1193,8 @@ impl CommandDispatcher {
         let store = ctx.store.clone();
         let checkpoint_dir = ctx.checkpoint_dir.clone();
         let last_save = ctx.last_save_ms.clone();
+        let aof = ctx.aof.clone();
+        let aof_covered = aof.covered_address();
         spawn(async move {
           match CheckpointManager::new()
             .create_checkpoint(&store, &checkpoint_dir, CheckpointType::FoldOver)
@@ -1193,6 +1202,11 @@ impl CommandDispatcher {
           {
             Ok(meta) => {
               last_save.store(meta.created_at, Ordering::Release);
+              if let Some(covered) = aof_covered
+                && let Err(e) = aof.truncate_covered(covered).await
+              {
+                warn!("BGSAVE 后 AOF 截断失败（仅增大重放体积，不影响正确性）: {e}");
+              }
             }
             Err(e) => error!("BGSAVE Checkpoint 失败: {e}"),
           }

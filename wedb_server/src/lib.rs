@@ -17,14 +17,12 @@ pub mod scripts;
 pub mod session;
 pub mod vectors;
 
-#[cfg(unix)]
-use wedb_redis::prelude::*;
-use std::os::unix::net::UnixStream as StdUnixStream;
 use std::{
   fs::{create_dir_all, remove_file},
   mem::{replace, take},
   net::{IpAddr, SocketAddr, TcpStream as StdTcpStream},
   num::NonZeroUsize,
+  os::unix::net::UnixStream as StdUnixStream,
   path::Path,
   rc::Rc,
   result,
@@ -65,6 +63,8 @@ use socket2::{SockRef, TcpKeepalive};
 use wcompact::LogCompactor;
 use wedb_net::{PooledReceiveBuffer, SendBuffer};
 use wedb_pubsub::create_session;
+#[cfg(unix)]
+use wedb_redis::prelude::*;
 use wedb_repl::{ReplicaCommand, SyncDecision, parse_replica_command};
 use wedb_resp::{
   CRLF, Error as RespError, RespCommand, RespReadUtils, SessionMruCache, SessionParseState, consts,
@@ -272,6 +272,16 @@ impl WedbServer {
       );
     }
 
+    // AOF 周期提交后台任务（对标 Garnet CommitTaskAsync：CommitFrequencyMs > 0 时
+    // 按固定频率把 AOF 缓冲提交落盘；0 = 每批应答前同步提交；-1 = 仅 SAVE/停机提交）
+    if let Some(aof_commit_ms) = self.context.aof.periodic_commit_ms() {
+      let ctx = Arc::clone(&self.context);
+      let (aof_tx, aof_rx) = bounded_async::<()>(1);
+      self.cancel_senders.lock().push(aof_tx.into());
+      spawn(Self::run_aof_commit_task(aof_commit_ms, ctx, aof_rx)).detach();
+      info!("AOF 周期提交任务已启动: 间隔={aof_commit_ms}ms");
+    }
+
     for _ in 1..nthreads.get() {
       let ctx = Arc::clone(&self.context);
       let id_gen = Arc::clone(&self.session_id_counter);
@@ -388,6 +398,37 @@ impl WedbServer {
   /// 按固定间隔唤醒，自 begin_address 起单轮最多推进 `compaction_max_seek_bytes`
   /// 执行一轮 Lookup 惰性紧缩（[`LogCompactor::compact_lazy`]），滚动回收删除产生的
   /// 日志垃圾；停机令牌触发时优雅退出；单轮紧缩失败仅告警不中断循环，绝不 panic。
+  /// AOF 周期提交后台循环（对标 Garnet CommitTaskAsync）
+  async fn run_aof_commit_task(
+    commit_ms: u64,
+    ctx: Arc<ServerContext>,
+    cancel_rx: AsyncRx<Array<()>>,
+  ) {
+    let cancel_token = CancelToken::new();
+    let watcher_cancel = cancel_token.clone();
+    spawn(async move {
+      let _ = cancel_rx.recv().await;
+      watcher_cancel.cancel();
+    })
+    .detach();
+
+    while ctx.is_running() {
+      if let Err(e) = ctx.aof.commit().await {
+        warn!("AOF 周期提交失败（不中断循环，下轮重试）: {e}");
+      }
+      // 间隔等待可被停机令牌即时打断（与紧缩任务同一套 CancelToken 机制）
+      if sleep(Duration::from_millis(commit_ms))
+        .with_cancel(cancel_token.clone())
+        .fail_fast()
+        .await
+        .is_err()
+      {
+        break;
+      }
+    }
+    debug!("AOF 周期提交任务收到停机信号, 优雅退出");
+  }
+
   async fn run_compaction_task(
     freq_secs: u64,
     ctx: Arc<ServerContext>,
@@ -564,6 +605,9 @@ impl WedbServer {
     if !self.is_stopped.swap(true, Ordering::SeqCst) {
       info!("收到停机指令, 正在执行优雅停机...");
       self.stop_listeners().await;
+      if let Err(e) = self.context.aof.commit().await {
+        warn!("停机 AOF 提交失败: {e}");
+      }
       self.context.store.flush_all().await?;
       info!("底层数据落盘同步完毕, 守护进程已安全停止.");
     }
@@ -980,6 +1024,9 @@ impl WedbServer {
       }
 
       if !send_buf.is_empty() {
+        // AOF 每批应答前提交落盘（0 档策略下沉于门面，对标 Garnet AofAutoCommit）：
+        // 一次批刷盘确认整条 pipeline 的写效果，确保应答即持久
+        ctx.aof.commit_before_response().await;
         let payload = send_buf.take();
         let BufResult(res, returned_buf) = writer.write_all(payload).await;
         if res.is_err() {

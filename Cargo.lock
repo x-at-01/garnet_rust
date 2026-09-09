@@ -3110,6 +3110,7 @@ dependencies = [
  "async-lock",
  "crc32fast",
  "event-listener",
+ "log",
  "thiserror",
  "wdev",
  "wram",
@@ -3203,6 +3204,7 @@ dependencies = [
  "log",
  "thiserror",
  "wdev",
+ "wepoch",
  "whasher",
  "whlog",
  "windex",
@@ -3283,6 +3285,18 @@ dependencies = [
  "wedb_resp",
  "whasher",
  "wrecord",
+]
+
+[[package]]
+name = "wedb_aof"
+version = "0.1.0"
+dependencies = [
+ "log",
+ "thiserror",
+ "waof",
+ "wbftree",
+ "wdev",
+ "wkv",
 ]
 
 [[package]]
@@ -3629,6 +3643,7 @@ dependencies = [
  "wcpr",
  "wdev",
  "wedb_acl",
+ "wedb_aof",
  "wedb_blocking",
  "wedb_cluster",
  "wedb_hash",

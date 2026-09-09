@@ -1,0 +1,28 @@
+[package]
+name = "wedb_aof"
+version = "0.1.0"
+edition = "2024"
+license = "MulanPSL-2.0"
+repository = "https://github.com/x-at-01/garnet_rust.git"
+homepage = "https://github.com/x-at-01/garnet_rust/tree/main/wedb_aof"
+description = "wedb_aof"
+keywords = []
+categories = []
+
+[features]
+default = []
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
+[dependencies]
+log = "0.4.34"
+thiserror = "2.0.20"
+waof = { version = "0.1.0", path = "../../wedb_base/waof" }
+wbftree = { version = "0.1.0", path = "../../wedb_base/wbftree" }
+wdev = { version = "0.1.0", path = "../../wedb_base/wdev" }
+wkv = { version = "0.1.0", path = "../../wedb_base/wkv" }
+
+[lints]
+workspace = true

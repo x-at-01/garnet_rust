@@ -12,6 +12,7 @@ use coarsetime::{Clock, Instant};
 use log::{info, warn};
 use wdev::SegmentedDevice;
 use wedb_acl::AccessControlList;
+use wedb_aof::AofLog;
 use wedb_blocking::CollectionItemBroker;
 use wedb_cluster::{ClusterManager, Worker};
 use wedb_net::LimitedFixedBufferPool;
@@ -40,6 +41,8 @@ pub struct ServerContext {
   pub args: ServerArgs,
   /// 混合日志底层存储引擎
   pub store: Arc<WedbStore<SegmentedDevice>>,
+  /// AOF 追加日志门面（增量持久化与复制流，未启用时为 disabled 门面）
+  pub aof: Arc<AofLog>,
   /// 检查点快照目录 (SAVE/BGSAVE 落盘目标)
   pub checkpoint_dir: PathBuf,
   /// 最近一次成功 SAVE 的 UNIX 毫秒时间戳 (LASTSAVE 依据，初始为服务启动时刻)
@@ -166,6 +169,33 @@ impl ServerContext {
       store.start_gc();
     }
 
+    // AOF 门面：先打开日志并恢复重放（Checkpoint 快照之后的增量帧回放到引擎），
+    // 再注入写监听端口——顺序保证重放写不会二次进入 AOF（对标 Garnet
+    // RecoverCheckpointAsync → RecoverAOFAsync → ReplayAOF 的恢复次序）
+    let aof = Arc::new(if args.aof_enabled {
+      let aof = AofLog::open(Path::new(&args.dir), args.aof_commit_ms).await?;
+      let replayed = aof.recover_and_replay(&store).await?;
+      if replayed > 0 {
+        info!("AOF 增量重放完成: {replayed} 帧已应用回存储引擎");
+      }
+      aof
+    } else {
+      AofLog::disabled()
+    });
+    // 两个引擎写端口分别注帧家族：hlog 效果（Upsert/Tombstone）与
+    // 共享 BfTree 效果（BfTreePut/BfTreeDelete，覆盖 Flattened ZSET score
+    // 唯一副本，对标 C# RangeIndexStreamChunk 专用帧）
+    if let Some(listener) = aof.write_listener()
+      && !store.set_write_listener(listener)
+    {
+      return Err(Error::Custom("AOF 写监听端口重复注入".into()));
+    }
+    if let Some(listener) = aof.bftree_listener()
+      && !store.bftree.set_write_listener(listener)
+    {
+      return Err(Error::Custom("AOF BfTree 写监听端口重复注入".into()));
+    }
+
     let default_pwd = args.requirepass.as_deref().unwrap_or("");
     let acl = Arc::new(AccessControlList::new(default_pwd));
     acl.set_storage(Arc::new(crate::StoreAclStorage::new(store.bftree.clone())));
@@ -216,6 +246,7 @@ impl ServerContext {
     Ok(Self {
       args,
       store,
+      aof,
       checkpoint_dir,
       last_save_ms: Arc::new(AtomicU64::new(Clock::now_since_epoch().as_millis())),
       acl,
