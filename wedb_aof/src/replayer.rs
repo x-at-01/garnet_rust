@@ -51,6 +51,24 @@ impl<D: Device> AofReplayer<D> {
           return Err(Error::Frame(format!("BfTreeDelete 重放失败: key={key:?}")));
         }
       }
+      frame::AofOp::RangeIndexSet => {
+        // 帧序保证索引 stub（hlog Upsert 帧）已先行恢复，树文件按 stub 惰性打开；
+        // stub 缺失说明帧链损坏，fail-fast
+        let (field, value) = frame::decode_range_val(val)?;
+        self
+          .session
+          .range_index_set(key, field, value)
+          .await
+          .map_err(|e| Error::Frame(format!("RangeIndexSet 重放失败: key={key:?}, err={e}")))?;
+      }
+      frame::AofOp::RangeIndexDelete => {
+        let (field, _) = frame::decode_range_val(val)?;
+        self
+          .session
+          .range_index_del(key, field)
+          .await
+          .map_err(|e| Error::Frame(format!("RangeIndexDelete 重放失败: key={key:?}, err={e}")))?;
+      }
     }
     Ok(())
   }

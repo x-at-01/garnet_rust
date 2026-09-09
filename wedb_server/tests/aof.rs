@@ -305,3 +305,76 @@ async fn test_aof_bftree_zset_crash_recovery() -> Void {
   info!("AOF BfTree 帧家族（Flattened ZSET score）崩溃恢复测试通过");
   OK
 }
+
+/// 周期档（aof_commit_ms > 0）：写入后等待周期任务提交，崩溃式退出后仍恢复
+#[compio::test]
+async fn test_aof_periodic_commit_recovery() -> Void {
+  let dir = tempdir()?;
+  let args = ServerArgs {
+    aof_commit_ms: 200,
+    ..aof_args(dir.path())
+  };
+
+  {
+    let server = Arc::new(WedbServer::new(args.clone()).await?);
+    let addr = start(&server).await?;
+    let mut client = TcpStream::connect(addr).await?;
+    assert_eq!(
+      send_and_recv(&mut client, b"*3\r\n$3\r\nSET\r\n$4\r\nperd\r\n$4\r\nkey1\r\n").await?,
+      b"+OK\r\n"
+    );
+    // 等待周期任务至少完成一次提交（间隔 200ms，取 3 倍余量）
+    compio::time::sleep(std::time::Duration::from_millis(600)).await;
+    // 崩溃式退出
+  }
+
+  {
+    let server = Arc::new(WedbServer::new(args).await?);
+    let addr = start(&server).await?;
+    let mut client = TcpStream::connect(addr).await?;
+    assert_eq!(
+      send_and_recv(&mut client, b"*2\r\n$3\r\nGET\r\n$4\r\nperd\r\n").await?,
+      b"$4\r\nkey1\r\n"
+    );
+    server.stop().await?;
+  }
+
+  info!("AOF 周期档提交恢复测试通过");
+  OK
+}
+
+/// 手动档（aof_commit_ms = -1）负向验证：无 SAVE、无停机提交时崩溃即丢，
+/// 兑现"不保证完整持久性"文档承诺——防止静默违背该取舍
+#[compio::test]
+async fn test_aof_manual_mode_crash_loses_uncommitted() -> Void {
+  let dir = tempdir()?;
+  let args = ServerArgs {
+    aof_commit_ms: -1,
+    ..aof_args(dir.path())
+  };
+
+  {
+    let server = Arc::new(WedbServer::new(args.clone()).await?);
+    let addr = start(&server).await?;
+    let mut client = TcpStream::connect(addr).await?;
+    assert_eq!(
+      send_and_recv(&mut client, b"*3\r\n$3\r\nSET\r\n$6\r\nmanual\r\n$3\r\nval\r\n").await?,
+      b"+OK\r\n"
+    );
+    // 崩溃式退出：未 SAVE、未停机提交 → 环形缓冲帧全部丢失
+  }
+
+  {
+    let server = Arc::new(WedbServer::new(args).await?);
+    let addr = start(&server).await?;
+    let mut client = TcpStream::connect(addr).await?;
+    assert_eq!(
+      send_and_recv(&mut client, b"*2\r\n$3\r\nGET\r\n$6\r\nmanual\r\n").await?,
+      b"$-1\r\n"
+    );
+    server.stop().await?;
+  }
+
+  info!("AOF 手动档崩溃丢弃负向验证通过");
+  OK
+}

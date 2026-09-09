@@ -14,5 +14,5 @@ mod replayer;
 
 pub use error::{Error, Result};
 pub use facade::{AOF_FILE_NAME, AofLog, DEFAULT_AOF_BUFFER_SIZE};
-pub use frame::{AofOp, decode_frame, encode_frame};
+pub use frame::{AofOp, decode_frame, decode_range_val, encode_frame, encode_range_val};
 pub use replayer::AofReplayer;

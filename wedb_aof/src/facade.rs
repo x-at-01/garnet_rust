@@ -15,7 +15,7 @@ use log::{error, info, warn};
 use waof::{WalConfig, WalLog};
 use wbftree::BfTreeListenerFn;
 use wdev::SegmentedDevice;
-use wkv::{WedbStore, WriteListenerFn};
+use wkv::{RangeIndexListenerFn, WedbStore, WriteListenerFn};
 
 use crate::{
   Result,
@@ -140,6 +140,25 @@ impl AofLog {
         }
       }
     }
+  }
+
+  /// RangeIndex 写监听适配器（注入 [`WedbStore::set_range_listener`] 端口）
+  ///
+  /// RangeIndex 树文件中的字段是唯一副本（独立于共享 BfTree 与 hlog），
+  /// 帧携带索引名 + field/value 编码，对标 C# RangeIndexStreamChunk 语义
+  pub fn range_listener(&self) -> Option<RangeIndexListenerFn> {
+    let enqueue = self.frame_enqueuer();
+    Some(Arc::new(
+      move |key: &[u8], field: &[u8], value: &[u8], delete: bool| {
+        let op = if delete {
+          AofOp::RangeIndexDelete
+        } else {
+          AofOp::RangeIndexSet
+        };
+        let val = frame::encode_range_val(field, value);
+        enqueue(op, key, &val);
+      },
+    ))
   }
 
   /// 每批应答前提交落盘（仅 `0` 档生效，对标 Garnet AofAutoCommit：

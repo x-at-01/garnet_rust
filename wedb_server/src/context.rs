@@ -195,6 +195,11 @@ impl ServerContext {
     {
       return Err(Error::Custom("AOF BfTree 写监听端口重复注入".into()));
     }
+    if let Some(listener) = aof.range_listener()
+      && !store.set_range_listener(listener)
+    {
+      return Err(Error::Custom("AOF RangeIndex 写监听端口重复注入".into()));
+    }
 
     let default_pwd = args.requirepass.as_deref().unwrap_or("");
     let acl = Arc::new(AccessControlList::new(default_pwd));

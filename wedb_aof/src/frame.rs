@@ -8,7 +8,7 @@ use crate::Error;
 
 /// AOF 帧操作类型（对标 C# AofEntryType 的类型化分发）
 ///
-/// 编号分配登记：0-3 已占用；4 起预留给后续帧家族（如 RangeIndex 树实例帧），
+/// 编号分配登记：0-5 已占用；6 起预留给后续帧家族，
 /// 未知编号 fail-fast 拒绝，新增变体受 match 穷尽检查保护
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
@@ -21,6 +21,10 @@ pub enum AofOp {
   BfTreePut = 2,
   /// 共享 BfTree 删除：`val` 恒为空
   BfTreeDelete = 3,
+  /// RangeIndex 字段写：`key` 为索引名，`val` 为 range 编码（见 [`encode_range_val`]）
+  RangeIndexSet = 4,
+  /// RangeIndex 字段删除：`key` 为索引名，`val` 为 range 编码且 value 恒空
+  RangeIndexDelete = 5,
 }
 
 impl AofOp {
@@ -32,6 +36,8 @@ impl AofOp {
       1 => Some(Self::Tombstone),
       2 => Some(Self::BfTreePut),
       3 => Some(Self::BfTreeDelete),
+      4 => Some(Self::RangeIndexSet),
+      5 => Some(Self::RangeIndexDelete),
       _ => None,
     }
   }
@@ -49,6 +55,32 @@ pub fn encode_frame(op: AofOp, key: &[u8], val: &[u8]) -> Vec<u8> {
   frame.extend_from_slice(key);
   frame.extend_from_slice(val);
   frame
+}
+
+/// 编码 RangeIndex 帧 value 段：`[flen u32 LE][field][value]`（Delete 时 value 恒空）
+pub fn encode_range_val(field: &[u8], value: &[u8]) -> Vec<u8> {
+  let mut val = Vec::with_capacity(4 + field.len() + value.len());
+  val.extend_from_slice(&(field.len() as u32).to_le_bytes());
+  val.extend_from_slice(field);
+  val.extend_from_slice(value);
+  val
+}
+
+/// 解码 RangeIndex 帧 value 段，返回 `(field, value)`
+pub fn decode_range_val(val: &[u8]) -> Result<(&[u8], &[u8]), Error> {
+  let Some(flen) = val.first_chunk::<4>() else {
+    return Err(Error::Frame("RangeIndex 帧值前缀不足".into()));
+  };
+  let flen = u32::from_le_bytes(*flen) as usize;
+  if 4 + flen > val.len() {
+    return Err(Error::Frame(format!(
+      "RangeIndex 帧值长度不符: field 声明 {flen}, 实际 {}",
+      val.len() - 4
+    )));
+  }
+  let field = &val[4..4 + flen];
+  let value = &val[4 + flen..];
+  Ok((field, value))
 }
 
 /// 解码物理效果帧，返回 `(op, key, val)`
@@ -69,13 +101,16 @@ pub fn decode_frame(frame: &[u8]) -> Result<(AofOp, &[u8], &[u8]), Error> {
   }
   let key = &frame[FRAME_PREFIX_LEN..FRAME_PREFIX_LEN + klen];
   let val = &frame[FRAME_PREFIX_LEN + klen..];
-  // 删除类帧恒空值、BfTreePut 恒非空（底层 insert 拒空值），矛盾帧即损坏
+  // 删除类帧恒空值、写入类帧恒非空（底层写收口同款约束），矛盾帧即损坏
   match op {
     AofOp::Tombstone | AofOp::BfTreeDelete if !val.is_empty() => {
       return Err(Error::Frame(format!("{op:?} 帧值应为空")));
     }
     AofOp::BfTreePut if val.is_empty() => {
       return Err(Error::Frame("BfTreePut 帧值不应为空".into()));
+    }
+    AofOp::RangeIndexSet if val.len() <= 4 => {
+      return Err(Error::Frame("RangeIndexSet 帧值过短".into()));
     }
     _ => {}
   }
