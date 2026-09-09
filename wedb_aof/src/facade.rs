@@ -12,7 +12,7 @@ use std::{
 };
 
 use log::{error, info, warn};
-use waof::{WalConfig, WalLog};
+use waof::{AofScanIterator, WalConfig, WalLog};
 use wbftree::BfTreeListenerFn;
 use wdev::SegmentedDevice;
 use wkv::{RangeIndexListenerFn, WedbStore, WriteListenerFn};
@@ -33,6 +33,12 @@ const AOF_SEGMENT_SIZE: u64 = 64 * 1024 * 1024;
 /// AOF 数据文件名
 pub const AOF_FILE_NAME: &str = "append.aof";
 
+/// 复制流推流回调端口（对标 C# `AofSyncTask` 的流消费端）
+///
+/// 每帧成功入队后同栈触发（参数为帧字节）。主侧把帧喂进复制积压缓冲，
+/// 推送任务自积压缓冲推送网络；回调位于写入热路径，必须无阻塞。
+pub type ReplicationSinkFn = Arc<dyn Fn(&[u8]) + Send + Sync>;
+
 /// AOF 门面：持有可选 waof 日志与提交策略，提供写监听适配、提交、恢复重放与 checkpoint 截断
 pub struct AofLog {
   /// 底层 waof 日志（未启用 AOF 时为 None）
@@ -44,6 +50,9 @@ pub struct AofLog {
   dropped_writes: Arc<AtomicU64>,
   /// 提交失败计数（设备持续故障时量化静默丢失窗口）
   commit_failures: Arc<AtomicU64>,
+  /// 复制流推流端口（宿主经 [`Self::set_replication_sink`] 注入；
+  /// Arc 包装使监听闭包可在注入后注册仍能观察到端口）
+  replication_sink: Arc<std::sync::OnceLock<ReplicationSinkFn>>,
 }
 
 impl AofLog {
@@ -60,6 +69,7 @@ impl AofLog {
       commit_ms,
       dropped_writes: Arc::new(AtomicU64::new(0)),
       commit_failures: Arc::new(AtomicU64::new(0)),
+      replication_sink: Arc::new(std::sync::OnceLock::new()),
     })
   }
 
@@ -70,6 +80,7 @@ impl AofLog {
       commit_ms: -1,
       dropped_writes: Arc::new(AtomicU64::new(0)),
       commit_failures: Arc::new(AtomicU64::new(0)),
+      replication_sink: Arc::new(std::sync::OnceLock::new()),
     }
   }
 
@@ -129,17 +140,30 @@ impl AofLog {
   fn frame_enqueuer(&self) -> impl Fn(AofOp, &[u8], &[u8]) + Send + Sync + use<> {
     let wal = self.wal.as_ref().map(Arc::clone);
     let dropped = Arc::clone(&self.dropped_writes);
+    let sink = Arc::clone(&self.replication_sink);
     move |op, key, val| {
       let Some(wal) = &wal else { return };
       let frame = frame::encode_frame(op, key, val);
-      if let Err(e) = wal.enqueue(&frame) {
-        let n = dropped.fetch_add(1, Ordering::Relaxed) + 1;
-        // 首次与 2 的幂次告警，防日志风暴
-        if n == 1 || n.is_power_of_two() {
-          warn!("AOF 入队失败（{e}），累计={n}");
+      match wal.enqueue(&frame) {
+        Ok(_) => {
+          if let Some(sink) = sink.get() {
+            sink(&frame);
+          }
+        }
+        Err(e) => {
+          let n = dropped.fetch_add(1, Ordering::Relaxed) + 1;
+          // 首次与 2 的幂次告警，防日志风暴
+          if n == 1 || n.is_power_of_two() {
+            warn!("AOF 入队失败（{e}），累计={n}");
+          }
         }
       }
     }
+  }
+
+  /// 注入复制流推流端口（帧入队成功后同栈回调；重复注入返回 false）
+  pub fn set_replication_sink(&self, sink: ReplicationSinkFn) -> bool {
+    self.replication_sink.set(sink).is_ok()
   }
 
   /// RangeIndex 写监听适配器（注入 [`WedbStore::set_range_listener`] 端口）
@@ -238,6 +262,37 @@ impl AofLog {
     }
     info!("AOF 恢复重放完成: 重放 {count} 帧, 提交位点={committed:#x}");
     Ok(count)
+  }
+
+  /// 已提交位点（None = 未启用）；复制全量同步以 [begin, committed) 为权威区间
+  pub fn committed_address(&self) -> Option<u64> {
+    self.wal.as_ref().map(|wal| wal.committed_until_address())
+  }
+
+  /// 已提交帧顺序扫描迭代器（复制全量同步直推用；None = 未启用）
+  pub fn scan_committed_frames(&self) -> Option<AofScanIterator<SegmentedDevice>> {
+    let wal = self.wal.as_ref()?;
+    Some(wal.scan_committed())
+  }
+
+  /// 从节点摄取：主节点推来的效果帧写入本地日志（帧头由本地确定性重算，
+  /// 与主侧逐字节一致；对标 C# 从侧 UnsafeEnqueueRaw 的保真落盘语义）
+  ///
+  /// 返回本地起始逻辑地址，调用方须校验位点连续性
+  pub async fn replica_ingest(&self, frame: &[u8]) -> Result<u64> {
+    match &self.wal {
+      Some(wal) => Ok(wal.enqueue(frame)?),
+      None => Ok(0),
+    }
+  }
+
+  /// 从节点全量重同步前的本地日志重置（位点回退至起始；物理段文件保留，
+  /// 全量帧随后覆写前缀——从侧场景下 reset 的崩溃复活窗口可接受）
+  pub async fn reset(&self) -> Result<()> {
+    match &self.wal {
+      Some(wal) => Ok(wal.reset().await?),
+      None => Ok(()),
+    }
   }
 
   /// 当前累计入队失败次数

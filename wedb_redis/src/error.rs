@@ -30,6 +30,9 @@ pub enum Error {
   Record(#[from] wrecord::Error),
 
   #[error(transparent)]
+  Value(#[from] wval::Error),
+
+  #[error(transparent)]
   Bitmap(#[from] crate::bitmap_simd::BitmapError),
 
   #[error(transparent)]
@@ -73,7 +76,7 @@ impl Error {
     match self {
       Self::Store(err) => err.is_wrong_type(),
       Self::Object(err) => err.is_wrong_type(),
-      Self::Record(wrecord::Error::InvalidCollectionType(_)) => true,
+      Self::Value(wval::Error::InvalidCollectionType(_)) => true,
       _ => false,
     }
   }

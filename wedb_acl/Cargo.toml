@@ -27,6 +27,7 @@ wedb_resp = { version = "0.1.0", path = "../wedb_resp" }
 whasher = { version = "0.1.0", path = "../../wedb_base/whasher" }
 fastrand = "2.5.0"
 wrecord = { version = "0.1.0", path = "../../wedb_base/wrecord" }
+wval = { version = "0.1.0", path = "../../wedb_base/wval" }
 bitcode = "0.6.9"
 itoa = "1.0.18"
 

@@ -6,7 +6,7 @@ use wkv::{
   MAX_COMPACT_TOTAL_BYTES, RawCollectionRead, SET_MAX_COMPACT_ENTRIES, SET_MAX_COMPACT_VALUE,
   StoreSession,
 };
-use wrecord::{CollectionType, CompactSetCodec, MetaValue, StorageEncoding};
+use wval::{CollectionType, CompactSetCodec, MetaValue, StorageEncoding};
 
 use super::{
   zset::{SCAN_RESERVE_CAP, SRANDMEMBER_MAX_SAMPLE},

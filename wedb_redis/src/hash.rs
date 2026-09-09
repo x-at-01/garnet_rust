@@ -7,7 +7,7 @@ use whasher::{HashSet, hash_set_with_capacity};
 use wkv::{
   HASH_MAX_COMPACT_ENTRIES, HASH_MAX_COMPACT_VALUE, MAX_COMPACT_TOTAL_BYTES, StoreSession,
 };
-use wrecord::{CollectionType, CompactHashCodec, MetaValue, StorageEncoding};
+use wval::{CollectionType, CompactHashCodec, MetaValue, StorageEncoding};
 
 use super::{zset::SCAN_RESERVE_CAP, *};
 use crate::error::Result;
@@ -49,100 +49,16 @@ pub(crate) async fn promote_hash_to_flattened<D: Device>(
   Ok(())
 }
 
-/// 紧凑哈希单遍融合清理：一次扫描同时完成过期条目淘汰与多字段删除（原地压缩，零额外堆分配）
-/// 与 CompactHashCodec::purge_expired 同型的写指针原地压缩，合并 purge + N 次 delete_field
-/// 的重复全量扫描为单遍；返回 (清除的过期条目数, 实际删除的字段数)，条目头计数随压缩同步修正
+/// 紧凑哈希单遍融合清理：委托 wval::CompactHashCodec::purge_and_delete
+///
+/// 一次扫描同时完成过期条目淘汰与多字段删除（原地压缩，零额外堆分配），
+/// 格式知识收敛回值层编解码器，本侧仅保留错误类型桥接
 pub(crate) fn compact_hash_purge_and_delete(
   buf: &mut Vec<u8>,
   fields: &[&[u8]],
   now: u64,
 ) -> Result<(usize, usize)> {
-  if buf.len() < 2 {
-    return Ok((0, 0));
-  }
-  let count = u16::from_be_bytes([buf[0], buf[1]]) as usize;
-  let mut targets: HashSet<&[u8]> = hash_set_with_capacity(fields.len());
-  for &f in fields {
-    targets.insert(f);
-  }
-
-  let mut offset = 2usize;
-  let mut write_offset = 2usize;
-  let mut purged = 0usize;
-  let mut deleted = 0usize;
-  let mut new_count = 0u16;
-
-  for _ in 0..count {
-    // 逐字段解析长度前缀（2B 字段长 + 2B 值长 + 1B 过期标志 [+ 8B 时间戳]），越界即报损坏
-    if offset + 4 > buf.len() {
-      return Err(
-        wrecord::Error::BufferTooShort {
-          expected: offset + 4,
-          actual: buf.len(),
-        }
-        .into(),
-      );
-    }
-    let f_len = u16::from_be_bytes([buf[offset], buf[offset + 1]]) as usize;
-    let f_start = offset + 2;
-    let f_end = f_start + f_len;
-    if f_end + 2 > buf.len() {
-      return Err(
-        wrecord::Error::BufferTooShort {
-          expected: f_end + 2,
-          actual: buf.len(),
-        }
-        .into(),
-      );
-    }
-    let v_len = u16::from_be_bytes([buf[f_end], buf[f_end + 1]]) as usize;
-    let v_start = f_end + 2;
-    let v_end = v_start + v_len;
-    if v_end >= buf.len() {
-      return Err(
-        wrecord::Error::BufferTooShort {
-          expected: v_end + 1,
-          actual: buf.len(),
-        }
-        .into(),
-      );
-    }
-    let has_exp = buf[v_end] != 0;
-    let entry_len = 2 + f_len + 2 + v_len + 1 + if has_exp { 8 } else { 0 };
-    if offset + entry_len > buf.len() {
-      return Err(
-        wrecord::Error::BufferTooShort {
-          expected: offset + entry_len,
-          actual: buf.len(),
-        }
-        .into(),
-      );
-    }
-
-    let expired = has_exp && {
-      let mut exp_bytes = [0u8; 8];
-      exp_bytes.copy_from_slice(&buf[v_end + 1..v_end + 9]);
-      u64::from_be_bytes(exp_bytes) <= now
-    };
-    if expired {
-      purged += 1;
-    } else if targets.remove(&buf[f_start..f_end]) {
-      deleted += 1;
-    } else {
-      if write_offset != offset {
-        buf.copy_within(offset..offset + entry_len, write_offset);
-      }
-      write_offset += entry_len;
-      new_count += 1;
-    }
-    offset += entry_len;
-  }
-
-  if purged + deleted > 0 {
-    buf.truncate(write_offset);
-    buf[0..2].copy_from_slice(&new_count.to_be_bytes());
-  }
-  Ok((purged, deleted))
+  CompactHashCodec::purge_and_delete(buf, fields, now).map_err(Into::into)
 }
 
 /// 尝试将打平 Hash 降级收缩为 Compact 编码（元素数 <= 16 时）

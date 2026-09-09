@@ -4,7 +4,7 @@ use std::{cmp::Reverse, collections::BinaryHeap};
 use bitcode::{Decode, Encode};
 use coarsetime::Clock;
 use whasher::{Entry, HashMap, hash_map_with_capacity};
-use wrecord::sample_distinct_indices;
+use wval::sample_distinct_indices;
 
 use crate::{
   error::{Error, Result},
@@ -52,7 +52,7 @@ fn now_ms() -> u64 {
   Clock::now_since_epoch().as_millis()
 }
 
-pub use wrecord::glob_match;
+pub use wval::glob_match;
 
 /// 哈希对象 (对应 Redis Hash / Garnet HashObject)
 #[derive(Debug, Clone, Default)]

@@ -1,5 +1,5 @@
 //! 紧凑有序集合直接复用并导出 wrecord 的实现
-pub use wrecord::{CompactZSet, CompactZSetCodec, CompactZSetIter, ZSetEntryRef};
+pub use wval::{CompactZSet, CompactZSetCodec, CompactZSetIter, ZSetEntryRef};
 
 use crate::{
   error::{Error, Result},

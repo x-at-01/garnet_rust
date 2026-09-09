@@ -3,7 +3,7 @@ use std::collections::hash_set;
 
 use bitcode::{Decode, Encode};
 use whasher::{HashSet, hash_set_with_capacity};
-use wrecord::{glob_match, sample_distinct_indices};
+use wval::{glob_match, sample_distinct_indices};
 
 use crate::error::{Error, Result};
 

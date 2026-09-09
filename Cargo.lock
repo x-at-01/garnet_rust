@@ -3209,6 +3209,7 @@ dependencies = [
  "whlog",
  "windex",
  "wrecord",
+ "wval",
 ]
 
 [[package]]
@@ -3235,11 +3236,13 @@ name = "wdev"
 version = "0.1.0"
 dependencies = [
  "compio",
+ "compio-driver",
+ "gxhash",
  "itoa",
  "libc",
  "log",
+ "papaya",
  "thiserror",
- "whasher",
  "wram",
 ]
 
@@ -3285,6 +3288,7 @@ dependencies = [
  "wedb_resp",
  "whasher",
  "wrecord",
+ "wval",
 ]
 
 [[package]]
@@ -3410,6 +3414,7 @@ dependencies = [
  "thiserror",
  "whasher",
  "wrecord",
+ "wval",
  "zmij",
 ]
 
@@ -3568,6 +3573,7 @@ dependencies = [
  "wkv",
  "wram",
  "wrecord",
+ "wval",
  "zmij",
 ]
 
@@ -3662,6 +3668,7 @@ dependencies = [
  "wedb_zset",
  "wkv",
  "wrecord",
+ "wval",
  "zmij",
 ]
 
@@ -3679,6 +3686,7 @@ dependencies = [
  "thiserror",
  "whasher",
  "wrecord",
+ "wval",
 ]
 
 [[package]]
@@ -3729,6 +3737,7 @@ dependencies = [
  "thiserror",
  "whasher",
  "wrecord",
+ "wval",
  "zmij",
 ]
 
@@ -3955,6 +3964,7 @@ dependencies = [
  "wram",
  "wrecord",
  "wreviv",
+ "wval",
  "zmij",
 ]
 
@@ -3974,11 +3984,8 @@ name = "wrecord"
 version = "0.1.0"
 dependencies = [
  "bitcode",
- "fastrand",
  "log",
- "strum",
  "thiserror",
- "whasher",
 ]
 
 [[package]]
@@ -3987,6 +3994,18 @@ version = "0.1.0"
 dependencies = [
  "thiserror",
  "windex",
+]
+
+[[package]]
+name = "wval"
+version = "0.1.0"
+dependencies = [
+ "bitcode",
+ "fastrand",
+ "strum",
+ "thiserror",
+ "whasher",
+ "wrecord",
 ]
 
 [[package]]

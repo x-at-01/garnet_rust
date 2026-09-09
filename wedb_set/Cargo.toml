@@ -25,6 +25,7 @@ fastrand = "2.5.0"
 thiserror = "2.0.20"
 whasher = { version = "0.1.0", path = "../../wedb_base/whasher" }
 wrecord = { version = "0.1.0", path = "../../wedb_base/wrecord" }
+wval = { version = "0.1.0", path = "../../wedb_base/wval" }
 
 [dev-dependencies]
 aok = "0.1.18"

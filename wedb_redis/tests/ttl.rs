@@ -13,7 +13,7 @@ use tempfile::{TempDir, tempdir};
 use wdev::SegmentedDevice;
 use wedb_redis::{RenameResult, prelude::*};
 use wkv::{StoreConfig, StoreSession, TtlOpt, WedbStore};
-use wrecord::{KeyTag, NamespaceDbCodec, SessionPrefixBuf};
+use wval::{KeyTag, NamespaceDbCodec, SessionPrefixBuf};
 
 #[ctor::ctor(unsafe)]
 fn _log_init() {

@@ -11,7 +11,7 @@ use std::sync::Arc;
 use log::{info, warn};
 use parking_lot::Mutex;
 use wbftree::{BfTreeInsertResult, BfTreeReadResult, BfTreeService};
-use wrecord::BfTag;
+use wval::BfTag;
 
 use crate::error::{Error, Result};
 

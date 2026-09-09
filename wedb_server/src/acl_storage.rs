@@ -11,7 +11,7 @@ use wbftree::{
   BfTreeDeleteResult, BfTreeInsertResult, BfTreeReadResult, BfTreeService, ScanReturnField,
 };
 use wedb_acl::{AclStorage, BoxFuture, Result, User, decode_user_key};
-use wrecord::BfTag;
+use wval::BfTag;
 
 /// 基于 BfTree 块级有序存储的 ACL 数据库持久化实现
 ///

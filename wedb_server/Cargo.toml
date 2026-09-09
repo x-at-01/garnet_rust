@@ -50,6 +50,7 @@ wedb_module = { version = "0.1.0", path = "../wedb_module" }
 wedb_net = { version = "0.1.0", path = "../wedb_net" }
 wedb_pubsub = { version = "0.1.0", path = "../wedb_pubsub" }
 wrecord = { version = "0.1.0", path = "../../wedb_base/wrecord" }
+wval = { version = "0.1.0", path = "../../wedb_base/wval" }
 wedb_repl = { version = "0.1.0", path = "../wedb_repl" }
 wedb_redis = { version = "0.1.0", path = "../wedb_redis" }
 wedb_resp = { version = "0.1.0", path = "../wedb_resp" }

@@ -10,7 +10,7 @@ use bitcode::{Decode, Encode};
 use coarsetime::Clock;
 use fastrand::Rng;
 use whasher::{HashMap, HashSet, hash_map_with_capacity, new_hash_map, new_hash_set};
-use wrecord::{decode_order_preserving_f64, encode_order_preserving_f64, sample_distinct_indices};
+use wval::{decode_order_preserving_f64, encode_order_preserving_f64, sample_distinct_indices};
 
 use crate::{
   error::{Error, Result},
@@ -231,7 +231,7 @@ fn now_ms() -> u64 {
   Clock::now_since_epoch().as_millis()
 }
 
-pub use wrecord::glob_match;
+pub use wval::glob_match;
 
 /// ZADD 选项配置
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]

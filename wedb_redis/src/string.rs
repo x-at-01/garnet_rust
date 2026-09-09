@@ -116,7 +116,7 @@ impl<D: Device> StringCommands<D> for StoreSession<D> {
     let first_addr = self.store.index.find_tag(&str_k);
     let res = self.try_read_raw_in_memory_with_addr(&str_k, first_addr, |bytes| {
       if matches!(bytes.first(), Some(1..=4)) && GarnetObject::deserialize(bytes).is_ok() {
-        return Err(wrecord::Error::InvalidCollectionType(TYPE_OBJECT_MARKER).into());
+        return Err(wval::Error::InvalidCollectionType(TYPE_OBJECT_MARKER).into());
       }
       Ok(f(bytes))
     })?;
@@ -145,7 +145,7 @@ impl<D: Device> StringCommands<D> for StoreSession<D> {
     let hit = self
       .read_with(key, |bytes| {
         if matches!(bytes.first(), Some(1..=4)) && GarnetObject::deserialize(bytes).is_ok() {
-          return Err(wrecord::Error::InvalidCollectionType(TYPE_OBJECT_MARKER).into());
+          return Err(wval::Error::InvalidCollectionType(TYPE_OBJECT_MARKER).into());
         }
         Ok(f(bytes))
       })
@@ -158,7 +158,7 @@ impl<D: Device> StringCommands<D> for StoreSession<D> {
         if let Some(meta) = self.load_meta(key).await?
           && meta.size > 0
         {
-          return Err(wrecord::Error::InvalidCollectionType(meta.collection_type.as_u8()).into());
+          return Err(wval::Error::InvalidCollectionType(meta.collection_type.as_u8()).into());
         }
         Ok(None)
       }
@@ -498,10 +498,10 @@ impl<D: Device> StringCommands<D> for StoreSession<D> {
     }
     let needed_len = match offset.checked_add(val.len()) {
       Some(l) => l,
-      None => return Err(wrecord::Error::ValueLengthOverflow(offset).into()),
+      None => return Err(wval::Error::ValueLengthOverflow(offset).into()),
     };
     if needed_len > 536_870_912 {
-      return Err(wrecord::Error::ValueLengthOverflow(needed_len).into());
+      return Err(wval::Error::ValueLengthOverflow(needed_len).into());
     }
 
     // 1. 惰性过期裁决前移 + 尝试原位覆写（严格对标 C# Garnet InPlaceUpdaterWorker）：

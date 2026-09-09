@@ -4,7 +4,7 @@ use wdev::Device;
 use wedb_object::GarnetObject;
 use windex::{HashBucket, HashBucketEntry};
 use wkv::{StoreSession, read_cache::is_read_cache_addr};
-use wrecord::{CollectionType, MetaValue};
+use wval::{CollectionType, MetaValue};
 
 use super::*;
 use crate::error::Result;
@@ -193,7 +193,7 @@ impl<D: Device> ObjectCommands<D> for StoreSession<D> {
     if let Some(meta) = self.load_meta(key).await?
       && meta.size > 0
     {
-      return Err(wrecord::Error::InvalidCollectionType(meta.collection_type.as_u8()).into());
+      return Err(wval::Error::InvalidCollectionType(meta.collection_type.as_u8()).into());
     }
     match self.read(key).await? {
       Some(bytes) => match GarnetObject::deserialize(&bytes) {
@@ -241,7 +241,7 @@ impl<D: Device> ObjectCommands<D> for StoreSession<D> {
     }
     // 幽灵元记录（打平集合秒删残留）：继续探测同名裸键以识别 WRONGTYPE
     if self.read(key).await?.is_some() {
-      return Err(wrecord::Error::InvalidCollectionType(0xFF).into());
+      return Err(wval::Error::InvalidCollectionType(0xFF).into());
     }
     Ok(None)
   }
@@ -261,13 +261,13 @@ impl<D: Device> ObjectCommands<D> for StoreSession<D> {
       && meta.size > 0
     {
       if meta.collection_type != expected {
-        return Err(wrecord::Error::InvalidCollectionType(meta.collection_type.as_u8()).into());
+        return Err(wval::Error::InvalidCollectionType(meta.collection_type.as_u8()).into());
       }
       return Ok(Some(meta));
     }
     // 幽灵元记录：继续探测同名裸键，杜绝在活字符串之上静默重建同名集合
     if self.read(key).await?.is_some() {
-      return Err(wrecord::Error::InvalidCollectionType(0xFF).into());
+      return Err(wval::Error::InvalidCollectionType(0xFF).into());
     }
     Ok(None)
   }

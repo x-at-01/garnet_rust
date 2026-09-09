@@ -13,6 +13,7 @@ mod error;
 pub mod modules;
 pub mod ns_alloc;
 pub mod range_index;
+pub mod replication;
 pub mod scripts;
 pub mod session;
 pub mod vectors;
@@ -65,7 +66,7 @@ use wedb_net::{PooledReceiveBuffer, SendBuffer};
 use wedb_pubsub::create_session;
 #[cfg(unix)]
 use wedb_redis::prelude::*;
-use wedb_repl::{ReplicaCommand, SyncDecision, parse_replica_command};
+use wedb_repl::{ReplConfSubCmd, ReplicaCommand, SyncDecision, parse_replica_command};
 use wedb_resp::{
   CRLF, Error as RespError, RespCommand, RespReadUtils, SessionMruCache, SessionParseState, consts,
   parse_session_command,
@@ -242,6 +243,18 @@ impl WedbServer {
       return Err(Error::Acl(e));
     }
 
+    // 从节点复制常驻循环（--replicaof 时拉起：握手 → 效果帧摄取 → ACK，
+    // 对标 Garnet ReplicationManager 的从侧同步任务）
+    if let Some(primary) = self.context.args.replicaof.clone() {
+      let replica_ctx = Arc::clone(&self.context);
+      spawn(async move {
+        if let Err(e) = replication::run_replica_loop(replica_ctx, &primary).await {
+          error!("从节点复制循环异常退出: {e}");
+        }
+      })
+      .detach();
+    }
+
     let ctx = Arc::clone(&self.context);
     let id_gen = Arc::clone(&self.session_id_counter);
     let is_stopped = Arc::clone(&self.is_stopped);
@@ -391,6 +404,90 @@ impl WedbServer {
         }
       }
     }
+  }
+
+  /// 副本推送任务晋升：应答行立即冲刷（先于任何帧流落盘），writer 升级共享
+  /// 互斥模式，交接专属推送协程；注册副本会话驱动 ACK 安全水位
+  /// （对标 Garnet TrySyncHandler 完成协商后的 HandleSyncStream 阶段）
+  async fn promote_replica_push_task(
+    ctx: Arc<ServerContext>,
+    writer: &mut SessionWriter,
+    send_buf: &mut SendBuffer,
+    node_id: String,
+    start_offset: u64,
+    full_resync: bool,
+  ) {
+    let payload = send_buf.take();
+    let BufResult(res, buf) = writer.write_all(payload).await;
+    if res.is_ok() {
+      send_buf.recycle(buf);
+    }
+
+    ctx.repl.register_replica(node_id, 0, String::new());
+
+    let old = replace(writer, SessionWriter::Transitioning);
+    if let SessionWriter::Direct(dw) = old {
+      let shared = Rc::new(AsyncMutex::new(dw));
+      spawn(Self::run_replica_push_task(
+        ctx,
+        Rc::clone(&shared),
+        start_offset,
+        full_resync,
+      ))
+      .detach();
+      *writer = SessionWriter::Shared(shared);
+    }
+  }
+
+  /// 副本推送协程：FullResync 时把 AOF 全量帧（[begin, committed) 权威区间，
+  /// 对标 C# diskless 同步全量阶段）喂进积压缓冲（last=0 自流起点完整重发，
+  /// 从节点已重置本地日志），随后轮询积压缓冲统一推送，全量段与增量段
+  /// 单源单序、位点空间连续
+  async fn run_replica_push_task(
+    ctx: Arc<ServerContext>,
+    shared: Rc<AsyncMutex<DirectWriter>>,
+    mut last: u64,
+    full_resync: bool,
+  ) {
+    if full_resync && let Some(mut iter) = ctx.aof.scan_committed_frames() {
+      loop {
+        match iter.next().await {
+          Ok(Some(rec)) => {
+            ctx.repl.append_stream(&rec.payload);
+          }
+          Ok(None) => break,
+          Err(e) => {
+            warn!("副本全量扫描失败: {e}");
+            return;
+          }
+        }
+      }
+    }
+
+    while ctx.is_running() {
+      if !ctx.repl.is_backlog_in_range(last) {
+        // 请求位点已被环形积压淘汰，从节点须走全量重同步
+        warn!(
+          "副本位点 {} 超出积压缓冲保留区间，断开以触发全量重同步",
+          last
+        );
+        break;
+      }
+      let (_, tail) = ctx.repl.backlog_offsets();
+      if tail > last {
+        let data = ctx.repl.read_backlog(last, usize::MAX);
+        let len = data.len() as u64;
+        let mut guard = shared.lock().await;
+        let BufResult(res, _) = guard.write_all(data).await;
+        if res.is_err() {
+          break;
+        }
+        drop(guard);
+        last += len;
+      }
+      sleep(Duration::from_millis(10)).await;
+    }
+    debug!("副本推送协程退出: last={last}");
   }
 
   /// AOF 周期提交后台循环（对标 Garnet CommitTaskAsync）
@@ -788,6 +885,8 @@ impl WedbServer {
 
     let mut writer = SessionWriter::Direct(write_stream);
     let mut pubsub_rx_opt = Some(pubsub_rx);
+    // 从节点复制会话标识（REPLCONF ip-address/listening-port 汇报，ACK 回填键）
+    let mut replica_node_id: Option<String> = None;
 
     let mut recv_buf =
       PooledReceiveBuffer::new(Arc::clone(&ctx.network_pool), 4096, 16 * 1024 * 1024);
@@ -836,16 +935,37 @@ impl WedbServer {
               parse_replica_command(recv_buf.unparsed_slice())
             {
               match rep_cmd {
-                ReplicaCommand::ReplConf(_) => {
-                  send_buf.write_ok();
-                }
+                ReplicaCommand::ReplConf(sub) => match sub {
+                  ReplConfSubCmd::Ack(offset) => {
+                    // 心跳位点回填（对标 Garnet UpdateReplicaAck），驱动安全水位推进；
+                    // ACK 必须静默——任何应答字节都会污染从侧帧流造成永久错位
+                    if let Some(id) = &replica_node_id {
+                      ctx.repl.update_replica_ack(id, offset);
+                    }
+                  }
+                  ReplConfSubCmd::IpAddress(ip) => {
+                    let entry = replica_node_id.get_or_insert_with(|| ip.clone());
+                    if !entry.contains(':') {
+                      *entry = format!("{ip}:0");
+                    }
+                    send_buf.write_ok();
+                  }
+                  ReplConfSubCmd::ListeningPort(port) => {
+                    let entry = replica_node_id.get_or_insert_with(|| format!("unknown:{port}"));
+                    if let Some(idx) = entry.rfind(':') {
+                      *entry = format!("{}:{port}", &entry[..idx]);
+                    }
+                    send_buf.write_ok();
+                  }
+                  _ => {
+                    send_buf.write_ok();
+                  }
+                },
                 ReplicaCommand::Psync { replid, offset } => {
-                  // 复制协商交由 ReplicationManager::handle_psync 判定增量/全量
-                  // (对标 Garnet TrySyncHandler, wal 边界取混合日志实际首尾位点)
-                  let (wal_begin, wal_tail) = (
-                    ctx.store.hlog.begin_address(),
-                    ctx.store.hlog.tail_address(),
-                  );
+                  // 复制协商交由 ReplicationManager::handle_psync 判定增量/全量；
+                  // 位点空间 = 复制积压缓冲字节位点（AOF 帧经推流端口喂入），
+                  // 与主→从流载荷自洽（对标 Garnet TrySyncHandler）
+                  let (wal_begin, wal_tail) = ctx.repl.backlog_offsets();
                   match ctx
                     .repl
                     .handle_psync(replid.as_str(), offset, wal_begin, wal_tail)
@@ -858,14 +978,15 @@ impl WedbServer {
                       send_buf.write_raw(b"+CONTINUE ");
                       send_buf.write_raw(replid.as_bytes());
                       send_buf.write_raw(CRLF);
-                      // 回放积压缓冲区 [start_offset, tail) 存量增量段（越界自动截空）；
-                      // 后续实时增量依赖写路径统一经 append_stream 推流（跨 crate 联动项）
-                      ctx
-                        .repl
-                        .with_backlog_slices(start_offset, usize::MAX, |s1, s2| {
-                          send_buf.write_raw(s1);
-                          send_buf.write_raw(s2);
-                        });
+                      Self::promote_replica_push_task(
+                        Arc::clone(&ctx),
+                        &mut writer,
+                        &mut send_buf,
+                        replica_node_id.clone().unwrap_or_else(|| "unknown".into()),
+                        start_offset,
+                        false,
+                      )
+                      .await;
                     }
                     Ok(SyncDecision::FullResync {
                       replid,
@@ -877,9 +998,15 @@ impl WedbServer {
                       let mut num_buf = Buffer::new();
                       send_buf.write_raw(num_buf.format(snapshot_offset).as_bytes());
                       send_buf.write_raw(CRLF);
-                      // 副本会话握手完成（本应答写出且快照接续确立）后，方由专属复制会话
-                      // register_replica 注册并 pin_min_served_offset 钉住安全位点；
-                      // 严禁握手前注册——新会话 ack_offset=0 会把安全位点钉死在 0
+                      Self::promote_replica_push_task(
+                        Arc::clone(&ctx),
+                        &mut writer,
+                        &mut send_buf,
+                        replica_node_id.clone().unwrap_or_else(|| "unknown".into()),
+                        0,
+                        true,
+                      )
+                      .await;
                     }
                     Err(e) => {
                       warn!("PSYNC 同步协商失败: err={e}");

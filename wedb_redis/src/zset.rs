@@ -7,9 +7,10 @@ use wkv::{
   MAX_COMPACT_TOTAL_BYTES, RawCollectionRead, StoreSession, ZSET_MAX_COMPACT_ENTRIES,
   ZSET_MAX_COMPACT_MEMBER,
 };
-use wrecord::{
-  CollectionType, CompactZSetCodec, MetaValue, StorageEncoding, ZSetEntryRef, ZSetSubKeyBuf,
-  ZSetSubKeyCodec,
+use wval::{
+  CollectionType, CompactZSetCodec, MetaValue, SCORE_KEY_HEADER_SIZE, StorageEncoding,
+  ZSetEntryRef, ZSetSubKeyBuf, ZSetSubKeyCodec, encode_order_preserving_f64,
+  sample_distinct_indices,
 };
 
 use super::{set::lock_keys_sorted, *};
@@ -167,6 +168,9 @@ pub(crate) const ZSET_SCORE_ENTRY_PLACEHOLDER: &[u8] = &[0];
 
 /// SRANDMEMBER 负数采样的防御性上限（与 `wedb_set` SetObject::MAX_RAND_SAMPLE_LIMIT 口径一致）
 pub(crate) const SRANDMEMBER_MAX_SAMPLE: usize = 1_000_000;
+
+/// 随机采样结果的初始容量预留上限（仅约束预分配，防御极端 count 值触发容量溢出中断）
+pub(crate) const RAND_SAMPLE_RESERVE_CAP: usize = 8192;
 
 /// SCAN 族 COUNT 提示的初始容量预留上限（仅约束预分配，实际结果集仍可按需增长，
 /// 防御极端 COUNT 值触发容量溢出中断）
@@ -664,9 +668,9 @@ pub(crate) async fn zrem_unlocked<D: Device>(
   Ok(removed)
 }
 
-/// 从全量切片中辅助随机选取 ZSet 成员
+/// 从全量集合中辅助随机选取 ZSet 成员（接管入参所有权，全集命中零拷贝返回）
 pub(crate) fn pick_random_zset_from_slice(
-  all: &[(Vec<u8>, f64)],
+  all: Vec<(Vec<u8>, f64)>,
   count: isize,
 ) -> Result<Vec<(Vec<u8>, f64)>> {
   if all.is_empty() || count == 0 {
@@ -675,18 +679,17 @@ pub(crate) fn pick_random_zset_from_slice(
   if count > 0 {
     let k = (count as usize).min(all.len());
     if k == all.len() {
-      return Ok(all.to_vec());
+      return Ok(all);
     }
-    let mut indices: Vec<usize> = (0..all.len()).collect();
-    fastrand::shuffle(&mut indices);
+    // 无重复升序抽样：O(k) 位掩码/栈数组，替代全量 indices + shuffle 的 O(N) 分配
     let mut result = Vec::with_capacity(k);
-    for &idx in &indices[..k] {
+    for idx in sample_distinct_indices(all.len(), k) {
       result.push(all[idx].clone());
     }
     Ok(result)
   } else {
     let pick_count = count.unsigned_abs().min(SRANDMEMBER_MAX_SAMPLE);
-    let mut result = Vec::with_capacity(pick_count.min(8192));
+    let mut result = Vec::with_capacity(pick_count.min(RAND_SAMPLE_RESERVE_CAP));
     for _ in 0..pick_count {
       let idx = fastrand::usize(0..all.len());
       result.push(all[idx].clone());
@@ -981,12 +984,16 @@ impl<D: Device> ZSetCommands<D> for StoreSession<D> {
     items: impl IntoIterator<Item = (f64, M)>,
     options: ZAddOpt,
   ) -> Result<usize> {
-    let item_vec: Vec<(f64, M)> = items.into_iter().collect();
+    // 校验与收集合并为单遍，省去先 collect 再遍历校验的重复扫描；
+    // size_hint 预分配消除批量写入的反复扩容
+    let items = items.into_iter();
+    let mut item_vec: Vec<(f64, M)> = Vec::with_capacity(items.size_hint().0);
+    for (score, member) in items {
+      options.validate(score)?;
+      item_vec.push((score, member));
+    }
     if item_vec.is_empty() {
       return Ok(0);
-    }
-    for (score, _) in &item_vec {
-      options.validate(*score)?;
     }
     if options.incr && item_vec.len() != 1 {
       return Err(wedb_zset::Error::InvalidOpt.into());
@@ -1452,9 +1459,17 @@ impl<D: Device> ZSetCommands<D> for StoreSession<D> {
         }
         return Ok(items);
       } else {
-        let all_matched: Vec<ZSetEntryRef<'_>> = iter.collect();
-        let mut items = Vec::with_capacity(count.min(all_matched.len().saturating_sub(offset)));
-        for e in all_matched.into_iter().rev().skip(offset).take(count) {
+        // 反向 + LIMIT：滑动窗口仅保留末尾 offset+count 条命中项，杜绝大区间全量物化
+        let keep = offset.saturating_add(count);
+        let mut tail: VecDeque<ZSetEntryRef<'_>> = VecDeque::with_capacity(keep.min(4096));
+        for e in iter {
+          if tail.len() == keep {
+            tail.pop_front();
+          }
+          tail.push_back(e);
+        }
+        let mut items = Vec::with_capacity(count.min(tail.len()));
+        for e in tail.into_iter().rev().skip(offset).take(count) {
           items.push((e.member.to_vec(), e.score));
         }
         return Ok(items);
@@ -1507,6 +1522,11 @@ impl<D: Device> ZSetCommands<D> for StoreSession<D> {
     }
 
     let mut count = 0usize;
+    // 保序编码分值直接按大端字节序比较：min/max 仅编码一次，逐键零浮点解码零分配。
+    // 端点先经 normalize_zero 归一（存储侧写入已统一 +0.0），杜绝查询端点为 -0.0 时
+    // 字节序比较与浮点语义在 ±0 边界上的计数偏差
+    let min_raw = u64::from_be_bytes(encode_order_preserving_f64(normalize_zero(range.min)));
+    let max_raw = u64::from_be_bytes(encode_order_preserving_f64(normalize_zero(range.max)));
     self.store.bftree.scan_with_end_key_callback(
       start_key.as_slice(),
       end_key.as_slice(),
@@ -1515,19 +1535,23 @@ impl<D: Device> ZSetCommands<D> for StoreSession<D> {
         if k >= end_key.as_slice() {
           return false;
         }
-        if let Ok(sref) = ZSetSubKeyCodec::decode_score_key(k) {
-          let valid = if range.min_inclusive {
-            sref.score >= range.min
-          } else {
-            sref.score > range.min
-          } && if range.max_inclusive {
-            sref.score <= range.max
-          } else {
-            sref.score < range.max
-          };
-          if valid {
-            count += 1;
-          }
+        // 分值键结构 [1B tag | 8B key_id | 8B version | 8B 保序分值 | member]，
+        // 定长前缀保证 25 字节头部完整，try_into 恒成功
+        let Some(score_bytes) = k.get(SCORE_KEY_HEADER_SIZE - 8..SCORE_KEY_HEADER_SIZE) else {
+          return true;
+        };
+        let s = u64::from_be_bytes(score_bytes.try_into().unwrap());
+        let valid = if range.min_inclusive {
+          s >= min_raw
+        } else {
+          s > min_raw
+        } && if range.max_inclusive {
+          s <= max_raw
+        } else {
+          s < max_raw
+        };
+        if valid {
+          count += 1;
         }
         true
       },
@@ -2213,13 +2237,33 @@ impl<D: Device> ZSetCommands<D> for StoreSession<D> {
           }
           return Ok(Vec::new());
         }
-        let all: Vec<(Vec<u8>, f64)> = CompactZSetCodec::iter_members(raw)
-          .map(|e| (e.member.to_vec(), e.score))
-          .collect();
-        if all.is_empty() {
-          return Ok(Vec::new());
+        if count > 0 {
+          // 蓄水池单遍抽样：O(N) 时间 O(k) 空间，杜绝全量物化的 N 次 member 堆分配
+          let k = (count as usize).min(meta.size as usize);
+          let mut reservoir: Vec<(Vec<u8>, f64)> = Vec::with_capacity(k);
+          for (i, e) in CompactZSetCodec::iter_members(raw).enumerate() {
+            if i < k {
+              reservoir.push((e.member.to_vec(), e.score));
+            } else {
+              let j = fastrand::usize(0..=i);
+              if j < k {
+                reservoir[j] = (e.member.to_vec(), e.score);
+              }
+            }
+          }
+          return Ok(reservoir);
         }
-        return pick_random_zset_from_slice(&all, count);
+        // 负数 count 有放回采样：k 次随机 rank 直查，O(1) 额外内存
+        let pick_count = count.unsigned_abs().min(SRANDMEMBER_MAX_SAMPLE);
+        let mut result = Vec::with_capacity(pick_count.min(RAND_SAMPLE_RESERVE_CAP));
+        for _ in 0..pick_count {
+          if let Some(e) =
+            CompactZSetCodec::entry_at_rank(raw, fastrand::usize(0..meta.size as usize))
+          {
+            result.push((e.member.to_vec(), e.score));
+          }
+        }
+        return Ok(result);
       }
       return Ok(Vec::new());
     }
@@ -2233,7 +2277,7 @@ impl<D: Device> ZSetCommands<D> for StoreSession<D> {
     // 负数 count 小额采样：直接 rank 有放回随机采样，杜绝千万级全表物化 OOM
     if count < 0 && count.unsigned_abs() < (meta.size as usize / 4).min(64) {
       let pick_count = count.unsigned_abs().min(SRANDMEMBER_MAX_SAMPLE);
-      let mut result = Vec::with_capacity(pick_count.min(8192));
+      let mut result = Vec::with_capacity(pick_count.min(RAND_SAMPLE_RESERVE_CAP));
       for _ in 0..pick_count {
         let rand_idx = fastrand::usize(0..meta.size as usize) as isize;
         let mut items = self.zrange_with_meta(&meta, rand_idx, rand_idx, false)?;
@@ -2263,7 +2307,7 @@ impl<D: Device> ZSetCommands<D> for StoreSession<D> {
 
     // 回退到 zrange_with_meta 获取全量（仅当请求数量接近全集时）
     let all = self.zrange_with_meta(&meta, 0, -1, false)?;
-    pick_random_zset_from_slice(&all, count)
+    pick_random_zset_from_slice(all, count)
   }
 
   /// 多有序集合并集 (ZUNION)

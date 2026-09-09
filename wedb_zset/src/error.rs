@@ -41,9 +41,13 @@ pub enum Error {
   #[error(transparent)]
   Bitcode(#[from] bitcode::Error),
 
-  /// Record 编解码错误
+  // Record 编解码错误
   #[error(transparent)]
   Record(#[from] wrecord::Error),
+
+  // 值层编解码错误
+  #[error(transparent)]
+  Value(#[from] wval::Error),
 }
 
 impl PartialEq for Error {
@@ -59,6 +63,7 @@ impl PartialEq for Error {
       (Self::UnsupportedVersion(a), Self::UnsupportedVersion(b)) => a == b,
       (Self::Bitcode(a), Self::Bitcode(b)) => a.to_string() == b.to_string(),
       (Self::Record(a), Self::Record(b)) => a.to_string() == b.to_string(),
+      (Self::Value(a), Self::Value(b)) => a.to_string() == b.to_string(),
       _ => false,
     }
   }

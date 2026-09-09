@@ -27,7 +27,7 @@ mod set;
 mod string;
 mod zset;
 
-use wrecord::{KeyTag, META_VALUE_SIZE, MetaValue, NamespaceDbCodec};
+use wval::{KeyTag, META_VALUE_SIZE, MetaValue, NamespaceDbCodec};
 
 pub mod bitmap_simd;
 pub mod error;
@@ -57,7 +57,7 @@ pub use list::ListCommands;
 pub use object::ObjectCommands;
 pub use set::SetCommands;
 pub use string::StringCommands;
-pub use wrecord::glob_match;
+pub use wval::glob_match;
 pub use zset::{AggregateType, LexBound, ZSetCommands};
 
 /// 打平集合元素降级收缩为紧凑内联存储的阈值 (16)

@@ -9,7 +9,7 @@ use wedb_zset::{ScoreRange, ZAddOpt};
 use wkv::{
   StoreConfig, StoreSession, WedbStore, ZSET_MAX_COMPACT_ENTRIES, ZSET_MAX_COMPACT_MEMBER,
 };
-use wrecord::StorageEncoding;
+use wval::StorageEncoding;
 
 /// 十进制补零到 width 位
 fn pad(v: impl itoa::Integer, width: usize) -> String {

@@ -17,7 +17,7 @@ use wcompact::{CompactionType, LogCompactor};
 use wdev::SegmentedDevice;
 use wedb_redis::prelude::*;
 use wkv::{StoreConfig, StoreSession, WedbStore};
-use wrecord::StorageEncoding;
+use wval::StorageEncoding;
 
 /// 本地测试存储构造（对齐 compact 支撑模块的默认参数：4096 桶 / 64KB 页 / 16 页 / 0.5 可变比）
 fn create_test_store(

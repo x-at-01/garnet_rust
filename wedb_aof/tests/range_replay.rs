@@ -8,8 +8,8 @@ use compio::runtime::Runtime;
 use log::info;
 use tempfile::tempdir;
 use wbftree::StorageBackend;
-use wedb_aof::AofLog;
 use wdev::SegmentedDevice;
+use wedb_aof::AofLog;
 use wkv::{StoreConfig, WedbStore};
 
 /// 打开基于临时目录的存储引擎（RangeIndex 树目录同置，崩溃后文件留存）
@@ -56,8 +56,12 @@ fn test_range_index_frame_replay_recovery() -> Void {
       session
         .range_index_create(b"idx", StorageBackend::Std, tuning)
         .await?;
-      session.range_index_set(b"idx", b"field-1", b"value-1").await?;
-      session.range_index_set(b"idx", b"field-2", b"value-2").await?;
+      session
+        .range_index_set(b"idx", b"field-1", b"value-1")
+        .await?;
+      session
+        .range_index_set(b"idx", b"field-2", b"value-2")
+        .await?;
       session.range_index_del(b"idx", b"field-1").await?;
       aof.commit().await?;
       // drop 即崩溃式退出（AofReplayer 与监听均已注入过，重放写不二次入 AOF）

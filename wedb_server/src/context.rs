@@ -246,6 +246,17 @@ impl ServerContext {
       ReplNodeRole::Primary
     };
     let repl = Arc::new(ReplicationManager::new(initial_role, 0));
+
+    // 复制流推流接线（对标 Garnet AofSyncTask 消费端）：AOF 帧入队成功后
+    // 同栈喂进复制积压缓冲，推送任务自积压缓冲推送网络；主从复制位点
+    // 空间自此统一为积压缓冲字节位点
+    if aof.is_enabled() {
+      let repl_for_sink = Arc::clone(&repl);
+      aof.set_replication_sink(Arc::new(move |frame: &[u8]| {
+        repl_for_sink.append_stream(frame);
+      }));
+    }
+
     let network_pool = LimitedFixedBufferPool::default_pool();
 
     Ok(Self {

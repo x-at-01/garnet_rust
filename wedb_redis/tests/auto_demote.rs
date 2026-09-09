@@ -7,7 +7,7 @@ use wdev::SegmentedDevice;
 use wedb_redis::prelude::*;
 use wedb_zset::ZAddOpt;
 use wkv::{StoreConfig, WedbStore};
-use wrecord::{CollectionType, StorageEncoding};
+use wval::{CollectionType, StorageEncoding};
 
 /// 十进制补零到 width 位
 fn pad(v: impl itoa::Integer, width: usize) -> String {

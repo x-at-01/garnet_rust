@@ -10,7 +10,7 @@
 
 use core::str::from_utf8;
 
-use wrecord::NamespaceDbCodec;
+use wval::NamespaceDbCodec;
 
 use crate::error::{Error, Result};
 

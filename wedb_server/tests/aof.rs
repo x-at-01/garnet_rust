@@ -320,7 +320,11 @@ async fn test_aof_periodic_commit_recovery() -> Void {
     let addr = start(&server).await?;
     let mut client = TcpStream::connect(addr).await?;
     assert_eq!(
-      send_and_recv(&mut client, b"*3\r\n$3\r\nSET\r\n$4\r\nperd\r\n$4\r\nkey1\r\n").await?,
+      send_and_recv(
+        &mut client,
+        b"*3\r\n$3\r\nSET\r\n$4\r\nperd\r\n$4\r\nkey1\r\n"
+      )
+      .await?,
       b"+OK\r\n"
     );
     // 等待周期任务至少完成一次提交（间隔 200ms，取 3 倍余量）
@@ -358,7 +362,11 @@ async fn test_aof_manual_mode_crash_loses_uncommitted() -> Void {
     let addr = start(&server).await?;
     let mut client = TcpStream::connect(addr).await?;
     assert_eq!(
-      send_and_recv(&mut client, b"*3\r\n$3\r\nSET\r\n$6\r\nmanual\r\n$3\r\nval\r\n").await?,
+      send_and_recv(
+        &mut client,
+        b"*3\r\n$3\r\nSET\r\n$6\r\nmanual\r\n$3\r\nval\r\n"
+      )
+      .await?,
       b"+OK\r\n"
     );
     // 崩溃式退出：未 SAVE、未停机提交 → 环形缓冲帧全部丢失
