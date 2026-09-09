@@ -3291,7 +3291,9 @@ dependencies = [
 name = "wedb_aof"
 version = "0.1.0"
 dependencies = [
+ "compio",
  "log",
+ "tempfile",
  "thiserror",
  "waof",
  "wbftree",
