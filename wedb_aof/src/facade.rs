@@ -11,7 +11,7 @@ use std::{
   },
 };
 
-use log::{info, warn};
+use log::{error, info, warn};
 use waof::{WalConfig, WalLog};
 use wbftree::BfTreeListenerFn;
 use wdev::SegmentedDevice;
@@ -26,7 +26,8 @@ use crate::{
 /// AOF 环形内存缓冲容量（64 MiB）
 pub const DEFAULT_AOF_BUFFER_SIZE: usize = 64 * 1024 * 1024;
 
-/// AOF 分段存储文件单段大小（64 MB）
+/// AOF 分段存储文件单段大小（64 MB；与环形缓冲容量数值巧合、语义无关——
+/// 前者是磁盘段文件大小，后者是提交前内存驻留窗，且显式覆盖 waof 默认 16MB）
 const AOF_SEGMENT_SIZE: u64 = 64 * 1024 * 1024;
 
 /// AOF 数据文件名
@@ -41,6 +42,8 @@ pub struct AofLog {
   commit_ms: i64,
   /// enqueue 失败计数（环形满且未及时 commit 释放时的可观测降级）
   dropped_writes: Arc<AtomicU64>,
+  /// 提交失败计数（设备持续故障时量化静默丢失窗口）
+  commit_failures: Arc<AtomicU64>,
 }
 
 impl AofLog {
@@ -56,6 +59,7 @@ impl AofLog {
       wal: Some(Arc::new(wal)),
       commit_ms,
       dropped_writes: Arc::new(AtomicU64::new(0)),
+      commit_failures: Arc::new(AtomicU64::new(0)),
     })
   }
 
@@ -65,6 +69,7 @@ impl AofLog {
       wal: None,
       commit_ms: -1,
       dropped_writes: Arc::new(AtomicU64::new(0)),
+      commit_failures: Arc::new(AtomicU64::new(0)),
     }
   }
 
@@ -92,22 +97,14 @@ impl AofLog {
   /// 速率持续超过窗口时、`-1` 档在累计未提交超过窗口时必然触达——两档均
   /// 不保证完整持久性，要求持久请用 `0` 档
   pub fn write_listener(&self) -> Option<WriteListenerFn> {
-    let wal = self.wal_for_listener()?;
-    let dropped = Arc::clone(&self.dropped_writes);
+    let enqueue = self.frame_enqueuer();
     Some(Arc::new(move |key: &[u8], val: &[u8], tombstone: bool| {
       let op = if tombstone {
         AofOp::Tombstone
       } else {
         AofOp::Upsert
       };
-      let frame = frame::encode_frame(op, key, val);
-      if let Err(e) = wal.enqueue(&frame) {
-        let n = dropped.fetch_add(1, Ordering::Relaxed) + 1;
-        // 首次与 2 的幂次告警，防日志风暴
-        if n == 1 || n.is_power_of_two() {
-          warn!("AOF 入队失败（{e}），累计={n}");
-        }
-      }
+      enqueue(op, key, val);
     }))
   }
 
@@ -116,28 +113,33 @@ impl AofLog {
   /// 覆盖 Flattened ZSET 的 score 键值等 BfTree 唯一副本写效果
   /// （对标 C# AofEntryType.RangeIndexStreamChunk 的专用帧思路）
   pub fn bftree_listener(&self) -> Option<BfTreeListenerFn> {
-    let wal = self.wal_for_listener()?;
-    let dropped = Arc::clone(&self.dropped_writes);
+    let enqueue = self.frame_enqueuer();
     Some(Arc::new(move |key: &[u8], val: &[u8], delete: bool| {
       let op = if delete {
         AofOp::BfTreeDelete
       } else {
         AofOp::BfTreePut
       };
+      enqueue(op, key, val);
+    }))
+  }
+
+  /// 帧入队闭包工厂：编帧 + 无锁入队，失败计数与频控告警（两类 listener 共用）
+  #[inline]
+  fn frame_enqueuer(&self) -> impl Fn(AofOp, &[u8], &[u8]) + Send + Sync + use<> {
+    let wal = self.wal.as_ref().map(Arc::clone);
+    let dropped = Arc::clone(&self.dropped_writes);
+    move |op, key, val| {
+      let Some(wal) = &wal else { return };
       let frame = frame::encode_frame(op, key, val);
       if let Err(e) = wal.enqueue(&frame) {
         let n = dropped.fetch_add(1, Ordering::Relaxed) + 1;
+        // 首次与 2 的幂次告警，防日志风暴
         if n == 1 || n.is_power_of_two() {
           warn!("AOF 入队失败（{e}），累计={n}");
         }
       }
-    }))
-  }
-
-  /// 提交前检查（供 listener 适配器取日志句柄，未启用返回 None）
-  #[inline]
-  fn wal_for_listener(&self) -> Option<Arc<WalLog<SegmentedDevice>>> {
-    self.wal.as_ref().map(Arc::clone)
+    }
   }
 
   /// 每批应答前提交落盘（仅 `0` 档生效，对标 Garnet AofAutoCommit：
@@ -158,9 +160,23 @@ impl AofLog {
   /// 周期任务与停机路径使用
   pub async fn commit(&self) -> Result<u64> {
     match &self.wal {
-      Some(wal) => Ok(wal.commit().await?),
+      Some(wal) => {
+        let res = wal.commit().await;
+        if res.is_err() {
+          let n = self.commit_failures.fetch_add(1, Ordering::Relaxed) + 1;
+          if n == 1 || n.is_power_of_two() {
+            error!("AOF 提交连续失败（应答照常，持久窗口扩大）: 第 {n} 次");
+          }
+        }
+        Ok(res?)
+      }
       None => Ok(0),
     }
+  }
+
+  /// 当前累计提交失败次数
+  pub fn commit_failures(&self) -> u64 {
+    self.commit_failures.load(Ordering::Relaxed)
   }
 
   /// checkpoint 覆盖位点（创建检查点前采样；None = 未启用）

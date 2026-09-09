@@ -5,7 +5,7 @@ use std::sync::Arc;
 use wdev::Device;
 use wkv::{StoreSession, WedbStore};
 
-use crate::{Result, frame};
+use crate::{Error, Result, frame};
 
 /// 把 AOF 帧逐条应用回存储引擎的重放器
 ///
@@ -38,10 +38,18 @@ impl<D: Device> AofReplayer<D> {
         self.session.delete_raw(key).await?;
       }
       frame::AofOp::BfTreePut => {
-        self.store.bftree.insert(key, val);
+        // 非 Success（空 val 等）说明帧语义损坏，fail-fast 拒绝启动而非静默丢 score
+        if self.store.bftree.insert(key, val) != wbftree::BfTreeInsertResult::Success {
+          return Err(Error::Frame(format!(
+            "BfTreePut 重放失败: key={key:?} len={}",
+            val.len()
+          )));
+        }
       }
       frame::AofOp::BfTreeDelete => {
-        self.store.bftree.delete(key);
+        if self.store.bftree.delete(key) != wbftree::BfTreeDeleteResult::Success {
+          return Err(Error::Frame(format!("BfTreeDelete 重放失败: key={key:?}")));
+        }
       }
     }
     Ok(())

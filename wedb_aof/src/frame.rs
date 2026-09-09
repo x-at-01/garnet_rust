@@ -7,6 +7,9 @@
 use crate::Error;
 
 /// AOF 帧操作类型（对标 C# AofEntryType 的类型化分发）
+///
+/// 编号分配登记：0-3 已占用；4 起预留给后续帧家族（如 RangeIndex 树实例帧），
+/// 未知编号 fail-fast 拒绝，新增变体受 match 穷尽检查保护
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub enum AofOp {
@@ -66,6 +69,16 @@ pub fn decode_frame(frame: &[u8]) -> Result<(AofOp, &[u8], &[u8]), Error> {
   }
   let key = &frame[FRAME_PREFIX_LEN..FRAME_PREFIX_LEN + klen];
   let val = &frame[FRAME_PREFIX_LEN + klen..];
+  // 删除类帧恒空值、BfTreePut 恒非空（底层 insert 拒空值），矛盾帧即损坏
+  match op {
+    AofOp::Tombstone | AofOp::BfTreeDelete if !val.is_empty() => {
+      return Err(Error::Frame(format!("{op:?} 帧值应为空")));
+    }
+    AofOp::BfTreePut if val.is_empty() => {
+      return Err(Error::Frame("BfTreePut 帧值不应为空".into()));
+    }
+    _ => {}
+  }
   Ok((op, key, val))
 }
 

@@ -393,11 +393,6 @@ impl WedbServer {
     }
   }
 
-  /// 周期自动紧缩后台任务（对标 Garnet `StoreWrapper.CompactionTaskAsync` 周期循环）
-  ///
-  /// 按固定间隔唤醒，自 begin_address 起单轮最多推进 `compaction_max_seek_bytes`
-  /// 执行一轮 Lookup 惰性紧缩（[`LogCompactor::compact_lazy`]），滚动回收删除产生的
-  /// 日志垃圾；停机令牌触发时优雅退出；单轮紧缩失败仅告警不中断循环，绝不 panic。
   /// AOF 周期提交后台循环（对标 Garnet CommitTaskAsync）
   async fn run_aof_commit_task(
     commit_ms: u64,
@@ -429,6 +424,11 @@ impl WedbServer {
     debug!("AOF 周期提交任务收到停机信号, 优雅退出");
   }
 
+  /// 周期自动紧缩后台任务（对标 Garnet `StoreWrapper.CompactionTaskAsync` 周期循环）
+  ///
+  /// 按固定间隔唤醒，自 begin_address 起单轮最多推进 `compaction_max_seek_bytes`
+  /// 执行一轮 Lookup 惰性紧缩（[`LogCompactor::compact_lazy`]），滚动回收删除产生的
+  /// 日志垃圾；停机令牌触发时优雅退出；单轮紧缩失败仅告警不中断循环，绝不 panic。
   async fn run_compaction_task(
     freq_secs: u64,
     ctx: Arc<ServerContext>,
