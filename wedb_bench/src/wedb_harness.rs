@@ -8,9 +8,9 @@ use std::{
 use compio::runtime::Runtime;
 use tempfile::{TempDir, tempdir};
 use wdev::SegmentedDevice;
+use wedb_redis::prelude::*;
 use wedb_zset::ZAddOpt;
 use whlog::{DEFAULT_MUTABLE_FRACTION, DEFAULT_NUM_PAGES, DEFAULT_PAGE_SIZE};
-use wedb_redis::prelude::*;
 use wkv::{DEFAULT_INDEX_SIZE, StoreConfig, StoreSession, WedbStore};
 
 use crate::{

@@ -1,9 +1,9 @@
-use wedb_redis::prelude::*;
 use std::sync::Arc;
 
 use aok::{OK, Void};
 use compio::runtime::Runtime;
 use log::info;
+use wedb_redis::prelude::*;
 use wedb_repl::{
   Error, NodeRole, ReplicaReplayer, ReplicationBacklog, ReplicationManager, SyncDecision,
 };

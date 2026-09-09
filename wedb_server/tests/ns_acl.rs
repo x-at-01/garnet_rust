@@ -434,8 +434,21 @@ async fn test_module_lifecycle_and_routing() -> Void {
 #[compio::test]
 async fn test_psync_negotiation() -> Void {
   info!("开始测试 PSYNC 复制协商");
-  let fixture = NsTestFixture::setup().await?;
-  let mut client = fixture.connect_client().await?;
+  // 复制流依附 AOF 推流（对标 Garnet 复制以 EnableAOF 为前提），测试自建启用 AOF 的实例
+  let dir = tempdir()?;
+  let server = Arc::new(
+    WedbServer::new(ServerArgs {
+      port: 0,
+      dir: dir.path().to_string_lossy().to_string(),
+      quiet: true,
+      aof_enabled: true,
+      store_memory_budget: Some(256 * 1024 * 1024),
+      ..Default::default()
+    })
+    .await?,
+  );
+  let addr = server.start().await?;
+  let mut client = TcpStream::connect(addr).await?;
 
   // 先写入数据推进复制流尾部位点，确保位点区间非空
   let resp = send_and_recv(&mut client, b"*3\r\n$3\r\nSET\r\n$2\r\npk\r\n$2\r\npv\r\n").await?;
@@ -447,11 +460,18 @@ async fn test_psync_negotiation() -> Void {
   let mut offset_str = String::new();
 
   // 1. 全新副本 (? -1)：判定全量同步，回 +FULLRESYNC <replid> <snapshot_offset>
-  let mut replica = fixture.connect_client().await?;
-  let resp = send_and_recv(&mut replica, b"*3\r\n$5\r\nPSYNC\r\n$1\r\n?\r\n$2\r\n-1\r\n").await?;
+  let mut replica = TcpStream::connect(addr).await?;
+  let resp = send_and_recv(
+    &mut replica,
+    b"*3\r\n$5\r\nPSYNC\r\n$1\r\n?\r\n$2\r\n-1\r\n",
+  )
+  .await?;
   let s = from_utf8(&resp)?;
   assert!(s.starts_with("+FULLRESYNC "), "全新副本应判定全量同步: {s}");
-  let line = s.lines().next().ok_or_else(|| aok::anyhow!("空应答: {s}"))?;
+  let line = s
+    .lines()
+    .next()
+    .ok_or_else(|| aok::anyhow!("空应答: {s}"))?;
   let body = line
     .strip_prefix("+FULLRESYNC ")
     .ok_or_else(|| aok::anyhow!("FULLRESYNC 回复格式非法: {s}"))?;
@@ -466,7 +486,7 @@ async fn test_psync_negotiation() -> Void {
   drop(replica);
 
   // 2. 持正确 replid 且位点在流区间内：判定增量接续 +CONTINUE
-  let mut replica = fixture.connect_client().await?;
+  let mut replica = TcpStream::connect(addr).await?;
   let mut req = b"*3\r\n$5\r\nPSYNC\r\n$40\r\n".to_vec();
   req.extend_from_slice(replid.as_bytes());
   let offset_arg = format!("${}\r\n{}\r\n", offset_str.len(), offset_str);
@@ -474,17 +494,19 @@ async fn test_psync_negotiation() -> Void {
   req.extend_from_slice(offset_arg.as_bytes());
   let resp = send_and_recv(&mut replica, &req).await?;
   let s = from_utf8(&resp)?;
-  let line = s.lines().next().ok_or_else(|| aok::anyhow!("空应答: {s}"))?;
-  let expected = {
-    let mut v = format!("+CONTINUE {replid}");
-    v.push_str("\r\n");
-    v
-  };
-  assert_eq!(line, expected, "增量接续应回 +CONTINUE: {s:?}");
+  let line = s
+    .lines()
+    .next()
+    .ok_or_else(|| aok::anyhow!("空应答: {s}"))?;
+  assert_eq!(
+    line,
+    format!("+CONTINUE {replid}"),
+    "增量接续应回 +CONTINUE: {s:?}"
+  );
   drop(replica);
 
   // 3. replid 不匹配：回退全量同步
-  let mut replica = fixture.connect_client().await?;
+  let mut replica = TcpStream::connect(addr).await?;
   let mut req = b"*3\r\n$5\r\nPSYNC\r\n$40\r\n".to_vec();
   req.extend_from_slice(b"0000000000000000000000000000000000000000");
   req.extend_from_slice(b"\r\n$1\r\n0\r\n");
@@ -492,6 +514,9 @@ async fn test_psync_negotiation() -> Void {
   let s = from_utf8(&resp)?;
   assert!(s.starts_with("+FULLRESYNC "), "伪造编号应回退全量: {s}");
   drop(replica);
+
+  drop(client);
+  server.stop().await?;
 
   info!("PSYNC 复制协商测试通过");
   OK
