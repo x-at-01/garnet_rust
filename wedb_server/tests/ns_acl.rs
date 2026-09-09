@@ -437,47 +437,61 @@ async fn test_psync_negotiation() -> Void {
   let fixture = NsTestFixture::setup().await?;
   let mut client = fixture.connect_client().await?;
 
-  // 先写入数据推进混合日志尾部位点，确保 wal 区间非空
+  // 先写入数据推进复制流尾部位点，确保位点区间非空
   let resp = send_and_recv(&mut client, b"*3\r\n$3\r\nSET\r\n$2\r\npk\r\n$2\r\npv\r\n").await?;
   assert_eq!(&resp, b"+OK\r\n");
 
+  // 复制协商语义（对标 Redis）：每连接仅允许一次 PSYNC，协商完成后该连接
+  // 即进入效果帧推流模式——应答行之后紧跟帧流字节，测试须按行截取判定
+  let mut replid = String::new();
+  let mut offset_str = String::new();
+
   // 1. 全新副本 (? -1)：判定全量同步，回 +FULLRESYNC <replid> <snapshot_offset>
-  let resp = send_and_recv(&mut client, b"*3\r\n$5\r\nPSYNC\r\n$1\r\n?\r\n$2\r\n-1\r\n").await?;
+  let mut replica = fixture.connect_client().await?;
+  let resp = send_and_recv(&mut replica, b"*3\r\n$5\r\nPSYNC\r\n$1\r\n?\r\n$2\r\n-1\r\n").await?;
   let s = from_utf8(&resp)?;
   assert!(s.starts_with("+FULLRESYNC "), "全新副本应判定全量同步: {s}");
-  let body = s
+  let line = s.lines().next().ok_or_else(|| aok::anyhow!("空应答: {s}"))?;
+  let body = line
     .strip_prefix("+FULLRESYNC ")
-    .and_then(|x| x.strip_suffix("\r\n"))
     .ok_or_else(|| aok::anyhow!("FULLRESYNC 回复格式非法: {s}"))?;
-  let (replid, offset_str) = body
+  let (rid, off) = body
     .split_once(' ')
     .ok_or_else(|| aok::anyhow!("FULLRESYNC 缺少位点: {s}"))?;
-  assert_eq!(replid.len(), 40, "复制编号应为 40 字符: {replid}");
-  let tail: u64 = offset_str.parse()?;
-  assert!(tail > 0, "快照基线位点应为日志尾部: {tail}");
+  assert_eq!(rid.len(), 40, "复制编号应为 40 字符: {rid}");
+  let tail: u64 = off.parse()?;
+  assert!(tail > 0, "快照基线位点应为流尾部: {tail}");
+  replid = rid.to_string();
+  offset_str = off.to_string();
+  drop(replica);
 
-  // 2. 持正确 replid 且位点在 wal 区间内：判定增量接续 +CONTINUE
+  // 2. 持正确 replid 且位点在流区间内：判定增量接续 +CONTINUE
+  let mut replica = fixture.connect_client().await?;
   let mut req = b"*3\r\n$5\r\nPSYNC\r\n$40\r\n".to_vec();
   req.extend_from_slice(replid.as_bytes());
   let offset_arg = format!("${}\r\n{}\r\n", offset_str.len(), offset_str);
   req.extend_from_slice(b"\r\n".as_slice());
   req.extend_from_slice(offset_arg.as_bytes());
-  let resp = send_and_recv(&mut client, &req).await?;
+  let resp = send_and_recv(&mut replica, &req).await?;
+  let s = from_utf8(&resp)?;
+  let line = s.lines().next().ok_or_else(|| aok::anyhow!("空应答: {s}"))?;
   let expected = {
-    let mut v = b"+CONTINUE ".to_vec();
-    v.extend_from_slice(replid.as_bytes());
-    v.extend_from_slice(b"\r\n");
+    let mut v = format!("+CONTINUE {replid}");
+    v.push_str("\r\n");
     v
   };
-  assert_eq!(&resp, &expected, "增量接续应回 +CONTINUE: {resp:?}");
+  assert_eq!(line, expected, "增量接续应回 +CONTINUE: {s:?}");
+  drop(replica);
 
   // 3. replid 不匹配：回退全量同步
+  let mut replica = fixture.connect_client().await?;
   let mut req = b"*3\r\n$5\r\nPSYNC\r\n$40\r\n".to_vec();
   req.extend_from_slice(b"0000000000000000000000000000000000000000");
   req.extend_from_slice(b"\r\n$1\r\n0\r\n");
-  let resp = send_and_recv(&mut client, &req).await?;
+  let resp = send_and_recv(&mut replica, &req).await?;
   let s = from_utf8(&resp)?;
   assert!(s.starts_with("+FULLRESYNC "), "伪造编号应回退全量: {s}");
+  drop(replica);
 
   info!("PSYNC 复制协商测试通过");
   OK
