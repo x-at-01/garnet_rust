@@ -456,9 +456,6 @@ async fn test_psync_negotiation() -> Void {
 
   // 复制协商语义（对标 Redis）：每连接仅允许一次 PSYNC，协商完成后该连接
   // 即进入效果帧推流模式——应答行之后紧跟帧流字节，测试须按行截取判定
-  let mut replid = String::new();
-  let mut offset_str = String::new();
-
   // 1. 全新副本 (? -1)：判定全量同步，回 +FULLRESYNC <replid> <snapshot_offset>
   let mut replica = TcpStream::connect(addr).await?;
   let resp = send_and_recv(
@@ -481,8 +478,8 @@ async fn test_psync_negotiation() -> Void {
   assert_eq!(rid.len(), 40, "复制编号应为 40 字符: {rid}");
   let tail: u64 = off.parse()?;
   assert!(tail > 0, "快照基线位点应为流尾部: {tail}");
-  replid = rid.to_string();
-  offset_str = off.to_string();
+  let replid = rid.to_string();
+  let offset_str = off.to_string();
   drop(replica);
 
   // 2. 持正确 replid 且位点在流区间内：判定增量接续 +CONTINUE

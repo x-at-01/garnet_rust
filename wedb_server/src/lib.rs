@@ -439,21 +439,44 @@ impl WedbServer {
     }
   }
 
-  /// 副本推送协程：FullResync 时把 AOF 全量帧（[begin, committed) 权威区间，
-  /// 对标 C# diskless 同步全量阶段）喂进积压缓冲（last=0 自流起点完整重发，
-  /// 从节点已重置本地日志），随后轮询积压缓冲统一推送，全量段与增量段
-  /// 单源单序、位点空间连续
+  /// 副本推送协程：FullResync 时先发 `+SNAPSHOT <len>` 行，再把 AOF 全量帧
+  /// （[begin, C0) 权威区间，原子快照采集，对标 C# diskless 全量阶段）直推
+  /// 本副本专用 socket——不进共享积压缓冲，杜绝与实时写交错、对存量副本的
+  /// 重复推送与容量淘汰死锁；随后自 C0 起轮询积压缓冲推送实时增量，
+  /// 快照段与增量段以 C0 为界不重不漏
   async fn run_replica_push_task(
     ctx: Arc<ServerContext>,
     shared: Rc<AsyncMutex<DirectWriter>>,
-    mut last: u64,
+    start_offset: u64,
     full_resync: bool,
   ) {
-    if full_resync && let Some(mut iter) = ctx.aof.scan_committed_frames() {
+    let mut last = start_offset;
+    if full_resync {
+      let Some((snapshot_len, mut iter)) = ctx.aof.committed_snapshot() else {
+        return;
+      };
+      let mut guard = shared.lock().await;
+      let head = format!("+SNAPSHOT {snapshot_len}\r\n");
+      let BufResult(res, _) = guard.write_all(head.into_bytes()).await;
+      if res.is_err() {
+        warn!("副本 SNAPSHOT 行写出失败（连接断开）");
+        return;
+      }
+      let mut pushed = 0u64;
       loop {
         match iter.next().await {
           Ok(Some(rec)) => {
-            ctx.repl.append_stream(&rec.payload);
+            // 快照段推完整记录帧（头 + 负载），与声明口径（逻辑地址字节）一致，
+            // 从侧 enqueue_raw 保真落盘后本地日志与主逐字节一致
+            let mut full_frame = rec.header.to_bytes().to_vec();
+            full_frame.extend_from_slice(&rec.payload);
+            let len = full_frame.len();
+            let BufResult(res, _) = guard.write_all(full_frame).await;
+            if res.is_err() {
+              warn!("副本全量推送中断（连接断开）");
+              return;
+            }
+            pushed += len as u64;
           }
           Ok(None) => break,
           Err(e) => {
@@ -462,14 +485,17 @@ impl WedbServer {
           }
         }
       }
+      debug_assert_eq!(pushed, snapshot_len, "快照字节数应与声明一致");
+      last = snapshot_len;
     }
 
     while ctx.is_running() {
       if !ctx.repl.is_backlog_in_range(last) {
         // 请求位点已被环形积压淘汰，从节点须走全量重同步
         warn!(
-          "副本位点 {} 超出积压缓冲保留区间，断开以触发全量重同步",
-          last
+          "副本位点 {} 超出积压缓冲保留区间 {:?}，断开以触发全量重同步",
+          last,
+          ctx.repl.backlog_offsets()
         );
         break;
       }
@@ -962,6 +988,10 @@ impl WedbServer {
                   }
                 },
                 ReplicaCommand::Psync { replid, offset } => {
+                  // 副本协商须过认证闸：未认证连接不得经 PSYNC 拉取全量数据
+                  if !session.authenticated {
+                    send_buf.write_error(b"NOAUTH Authentication required.");
+                  } else {
                   // 复制协商交由 ReplicationManager::handle_psync 判定增量/全量；
                   // 位点空间 = 复制积压缓冲字节位点（AOF 帧经推流端口喂入），
                   // 与主→从流载荷自洽（对标 Garnet TrySyncHandler）
@@ -1012,6 +1042,7 @@ impl WedbServer {
                       warn!("PSYNC 同步协商失败: err={e}");
                       send_buf.write_error_fmt(format_args!("ERR {e}"));
                     }
+                  }
                   }
                 }
                 ReplicaCommand::Ping => {

@@ -112,17 +112,58 @@ async fn replica_session(
     received_bytes
   );
   let sync_reply = handshake_step(&mut stream, &mut pending, psync.as_bytes()).await?;
+  let replayer = AofReplayer::new(&ctx.store)?;
   let reply = String::from_utf8_lossy(&sync_reply).to_string();
   if let Some(rest) = reply.strip_prefix("+FULLRESYNC") {
-    // 全量重同步：采纳主身份，重置本地日志位点后重收全量帧
-    // （要求从节点为空库或可容忍旧数据被全量帧前缀覆盖，对标 Redis FLUSHALL 语义）
+    // 全量重同步（对标 Redis：FULLRESYNC 行位点 = 增量计数的基数，快照段
+    // 以 +SNAPSHOT <len> 显式分界不计入位点；本地日志重置，要求从节点为
+    // 空库或可容忍旧数据被全量帧前缀覆盖）
     let mut parts = rest.split_whitespace();
     if let Some(replid) = parts.next() {
       *cached_replid = replid.to_string();
     }
+    let base_offset = parts.next().and_then(|x| x.parse::<u64>().ok()).unwrap_or(0);
     ctx.aof.reset().await?;
-    *received_bytes = 0;
-    info!("全量重同步开始（本地日志位点已重置）");
+    *received_bytes = base_offset;
+
+    // 读 +SNAPSHOT <len> 行，随后定长摄取快照段（不计数）
+    let snapshot_line = handshake_step(&mut stream, &mut pending, b"").await?;
+    let snapshot_len: u64 = snapshot_line
+      .strip_prefix(b"+SNAPSHOT".as_slice())
+      .map(|x| String::from_utf8_lossy(x).trim().parse().ok())
+      .and_then(|x| x)
+      .ok_or_else(|| crate::error::Error::Custom("SNAPSHOT 行缺失".into()))?;
+    info!("全量重同步开始: 快照 {snapshot_len} 字节（本地日志位点已重置）");
+    let mut remaining = snapshot_len;
+    while remaining > 0 {
+      let chunk = remaining.min(64 * 1024) as usize;
+      let BufResult(res, buf) = stream.read(vec![0u8; chunk]).await;
+      let n = match res {
+        Ok(n) if n > 0 => n,
+        Ok(_) => return Err(crate::error::Error::Custom("快照段连接关闭".into())),
+        Err(e) => return Err(crate::error::Error::Io(e)),
+      };
+      pending.extend_from_slice(&buf[..n]);
+      let mut taken = 0usize;
+      while remaining > 0 && pending.len() - taken >= FRAME_PREFIX_LEN {
+        let head = &pending[taken..taken + FRAME_PREFIX_LEN];
+        let klen = u32::from_le_bytes(head[1..5].try_into().unwrap()) as usize;
+        let vlen = u32::from_le_bytes(head[5..9].try_into().unwrap()) as usize;
+        let frame_len = FRAME_PREFIX_LEN + klen + vlen;
+        if pending.len() - taken < frame_len {
+          break;
+        }
+        let full_frame = &pending[taken..taken + frame_len];
+        ctx.aof.replica_ingest_raw(full_frame).await?;
+        replayer.apply(&full_frame[FRAME_PREFIX_LEN..]).await?;
+        taken += frame_len;
+        remaining = remaining.saturating_sub(frame_len as u64);
+      }
+      if taken > 0 {
+        pending.drain(..taken);
+      }
+    }
+    info!("全量重同步快照摄取完成");
   } else if let Some(rest) = reply.strip_prefix("+CONTINUE") {
     if let Some(replid) = rest.split_whitespace().next() {
       *cached_replid = replid.to_string();
@@ -135,8 +176,8 @@ async fn replica_session(
   }
 
   // 帧摄取：本地保真落盘 + 帧重放应用（对标 C# UnsafeEnqueueRaw + ProcessAofRecord）
-  let replayer = AofReplayer::new(&ctx.store)?;
   let mut ack_deadline = Instant::now();
+
 
   loop {
     if !ctx.is_running() {
@@ -166,13 +207,16 @@ async fn replica_session(
       let klen = u32::from_le_bytes(head[1..5].try_into().unwrap()) as usize;
       let vlen = u32::from_le_bytes(head[5..9].try_into().unwrap()) as usize;
       let frame_len = FRAME_PREFIX_LEN + klen + vlen;
+      // 帧长超引擎单条上限即流错位（防错位后 pending 无界增长 OOM）
+      if frame_len > wedb_aof::DEFAULT_AOF_BUFFER_SIZE {
+        return Err(crate::error::Error::Custom("帧长超出引擎上限，流错位".into()));
+      }
       if pending.len() - consumed < frame_len {
         break;
       }
       let frame = &pending[consumed..consumed + frame_len];
       ctx.aof.replica_ingest(frame).await?;
       replayer.apply(frame).await?;
-      let _ = addr; // 本地链连续性由 enqueue_raw 顺序写保证
       consumed += frame_len;
     }
     if consumed > 0 {

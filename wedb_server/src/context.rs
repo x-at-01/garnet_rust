@@ -82,6 +82,13 @@ pub struct ServerContext {
 impl ServerContext {
   /// 根据命令行配置参数初始化创建服务端上下文 (含 Checkpoint 崩溃恢复)
   pub async fn new(args: ServerArgs) -> Result<Self> {
+    // 复制流依附 AOF 推流端口（对标 Garnet 复制以 EnableAOF 为前提），
+    // 缺失即拒绝启动，杜绝「replicaof 静默失效」
+    if args.replicaof.is_some() && !args.aof_enabled {
+      return Err(Error::Custom(
+        "启用 replicaof 必须同时启用 AOF（--aof-enabled）：复制流由 AOF 帧推流驱动".into(),
+      ));
+    }
     create_dir_all(&args.dir)?;
     let checkpoint_dir = Path::new(&args.dir).join(CHECKPOINT_DIR);
     let db_path = Path::new(&args.dir).join(STORE_DB_FILE);
@@ -184,21 +191,41 @@ impl ServerContext {
     });
     // 两个引擎写端口分别注帧家族：hlog 效果（Upsert/Tombstone）与
     // 共享 BfTree 效果（BfTreePut/BfTreeDelete，覆盖 Flattened ZSET score
-    // 唯一副本，对标 C# RangeIndexStreamChunk 专用帧）
-    if let Some(listener) = aof.write_listener()
-      && !store.set_write_listener(listener)
-    {
-      return Err(Error::Custom("AOF 写监听端口重复注入".into()));
+    // 唯一副本，对标 C# RangeIndexStreamChunk 专用帧）。
+    // 从节点身份不注入：本地写即被 READONLY 拒绝，数据面全部来自复制帧，
+    // 注入会使 ingest 原始帧与 listener 效果帧双写本地 AOF
+    // 复制管理器先行创建：推流 sink 须与引擎写监听同批注入——任何帧
+    // （含 ns_alloc 水位等启动期写入）都不允许「有 AOF 无 backlog」，
+    // 否则全量/增量位点空间断裂
+    let initial_role = if args.replicaof.is_some() {
+      ReplNodeRole::Replica
+    } else {
+      ReplNodeRole::Primary
+    };
+    let repl = Arc::new(ReplicationManager::new(initial_role, 0));
+    if aof.is_enabled() && args.replicaof.is_none() {
+      let repl_for_sink = Arc::clone(&repl);
+      aof.set_replication_sink(Arc::new(move |frame: &[u8]| {
+        repl_for_sink.append_stream(frame);
+      }));
     }
-    if let Some(listener) = aof.bftree_listener()
-      && !store.bftree.set_write_listener(listener)
-    {
-      return Err(Error::Custom("AOF BfTree 写监听端口重复注入".into()));
-    }
-    if let Some(listener) = aof.range_listener()
-      && !store.set_range_listener(listener)
-    {
-      return Err(Error::Custom("AOF RangeIndex 写监听端口重复注入".into()));
+
+    if args.replicaof.is_none() {
+      if let Some(listener) = aof.write_listener()
+        && !store.set_write_listener(listener)
+      {
+        return Err(Error::Custom("AOF 写监听端口重复注入".into()));
+      }
+      if let Some(listener) = aof.bftree_listener()
+        && !store.bftree.set_write_listener(listener)
+      {
+        return Err(Error::Custom("AOF BfTree 写监听端口重复注入".into()));
+      }
+      if let Some(listener) = aof.range_listener()
+        && !store.set_range_listener(listener)
+      {
+        return Err(Error::Custom("AOF RangeIndex 写监听端口重复注入".into()));
+      }
     }
 
     let default_pwd = args.requirepass.as_deref().unwrap_or("");
@@ -239,23 +266,6 @@ impl ServerContext {
     } else {
       None
     };
-
-    let initial_role = if args.replicaof.is_some() {
-      ReplNodeRole::Replica
-    } else {
-      ReplNodeRole::Primary
-    };
-    let repl = Arc::new(ReplicationManager::new(initial_role, 0));
-
-    // 复制流推流接线（对标 Garnet AofSyncTask 消费端）：AOF 帧入队成功后
-    // 同栈喂进复制积压缓冲，推送任务自积压缓冲推送网络；主从复制位点
-    // 空间自此统一为积压缓冲字节位点
-    if aof.is_enabled() {
-      let repl_for_sink = Arc::clone(&repl);
-      aof.set_replication_sink(Arc::new(move |frame: &[u8]| {
-        repl_for_sink.append_stream(frame);
-      }));
-    }
 
     let network_pool = LimitedFixedBufferPool::default_pool();
 
