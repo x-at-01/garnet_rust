@@ -25,7 +25,9 @@ wdev = { version = "0.1.0", path = "../../wedb_base/wdev" }
 wkv = { version = "0.1.0", path = "../../wedb_base/wkv" }
 
 [dev-dependencies]
+aok = "0.1.18"
 compio = { version = "0.19.2", features = ["runtime"] }
+log = "0.4.34"
 tempfile = "3.27.0"
 wbftree = { version = "0.1.0", path = "../../wedb_base/wbftree" }
 wkv = { version = "0.1.0", path = "../../wedb_base/wkv" }

@@ -7,7 +7,7 @@ use aok::{OK, Result, Void};
 use compio::runtime::Runtime;
 use log::info;
 use tempfile::tempdir;
-use wbftree::{StorageBackend, TreeTuning};
+use wbftree::StorageBackend;
 use wedb_aof::AofLog;
 use wdev::SegmentedDevice;
 use wkv::{StoreConfig, WedbStore};
@@ -46,7 +46,7 @@ fn test_range_index_frame_replay_recovery() -> Void {
       }
 
       let session = store.new_session()?;
-      let tuning = TreeTuning {
+      let tuning = wbftree::TreeTuning {
         cache_size: 64 * 1024,
         min_record_size: 8,
         max_record_size: 1024,
@@ -54,7 +54,7 @@ fn test_range_index_frame_replay_recovery() -> Void {
         leaf_page_size: 0,
       };
       session
-        .range_index_create(b"idx", StorageBackend::Disk, tuning)
+        .range_index_create(b"idx", StorageBackend::Std, tuning)
         .await?;
       session.range_index_set(b"idx", b"field-1", b"value-1").await?;
       session.range_index_set(b"idx", b"field-2", b"value-2").await?;
